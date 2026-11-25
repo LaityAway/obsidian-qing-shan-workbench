@@ -1,0 +1,28 @@
+{
+  "name": "obsidian-qing-shan-workbench",
+  "version": "1.0.0",
+  "description": "Qing Shan Workbench — Interactive Mermaid diagram lightbox (zoom, minimap, node search, high-DPI SVG/PNG export) and virtualized wide-table workbench (sticky headers/first column, multi-type sort, filters, row detail drawer, TSV/CSV/Markdown export).",
+  "main": "main.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/unit/*.test.mjs tests/browser/*.test.mjs tests/release-lint.test.mjs",
+    "test:unit": "node --test tests/unit/*.test.mjs tests/release-lint.test.mjs",
+    "test:browser": "node --test tests/browser/*.test.mjs",
+    "deploy:local": "node scripts/build.mjs && node scripts/deploy-local.mjs"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "mermaid",
+    "table",
+    "workbench"
+  ],
+  "author": "青山 (LaityAway)",
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "obsidian": "latest",
+    "typescript": "^5.8.0"
+  }
+}
