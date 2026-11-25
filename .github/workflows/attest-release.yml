@@ -16,6 +16,17 @@ jobs:
       - name: Check out release tag
         uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Build release artifacts
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+
       - name: Generate artifact attestations
         uses: actions/attest-build-provenance@v2
         with:

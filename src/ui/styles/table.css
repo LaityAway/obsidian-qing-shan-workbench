@@ -38,13 +38,14 @@
   border-color: var(--qs-link, var(--interactive-accent));
 }
 
-.qs-wb-row-hidden {
-  display: none !important;
+.qs-wb-table-host tbody tr.qs-wb-row-hidden {
+  display: none;
 }
 
+.markdown-preview-view .qs-wb-table-host.qs-wb-table-frozen,
 .qs-wb-table-host.qs-wb-table-frozen {
   max-height: var(--qs-wb-inline-max-h, 560px);
-  overflow: auto !important;
+  overflow: auto;
   border: 1px solid var(--qs-border, var(--background-modifier-border));
   border-radius: 6px;
   padding: 0 6px 6px;
@@ -226,10 +227,10 @@
   background: color-mix(in srgb, var(--qs-wb-accent) 12%, var(--qs-wb-paper));
 }
 
-.qs-wb-spacer-row td {
-  padding: 0 !important;
-  border: 0 !important;
-  background: transparent !important;
+.qs-wb-grid-table tbody tr.qs-wb-spacer-row td {
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .qs-wb-grid-table.is-freeze-first th:first-child,

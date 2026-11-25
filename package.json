@@ -1,6 +1,6 @@
 {
   "name": "obsidian-qing-shan-workbench",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Qing Shan Workbench — Interactive Mermaid diagram lightbox (zoom, minimap, node search, high-DPI SVG/PNG export) and virtualized wide-table workbench (sticky headers/first column, multi-type sort, filters, row detail drawer, TSV/CSV/Markdown export).",
   "main": "main.js",
   "scripts": {

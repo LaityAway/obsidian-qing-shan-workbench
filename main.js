@@ -113,15 +113,9 @@ function isZh() {
       const lang = (0, import_obsidian.getLanguage)();
       if (lang) return String(lang).toLowerCase().startsWith("zh");
     }
-    if (typeof globalThis.localStorage?.getItem === "function") {
-      const stored = globalThis.localStorage.getItem("language");
-      if (stored) return String(stored).toLowerCase().startsWith("zh");
-      const docLang2 = globalThis.document?.documentElement?.lang;
-      if (docLang2) return String(docLang2).toLowerCase().startsWith("zh");
-      return false;
+    if (typeof activeDocument !== "undefined" && activeDocument?.documentElement?.lang) {
+      return activeDocument.documentElement.lang.toLowerCase().startsWith("zh");
     }
-    const docLang = globalThis.document?.documentElement?.lang;
-    if (docLang) return String(docLang).toLowerCase().startsWith("zh");
     return false;
   } catch {
     return false;
@@ -156,7 +150,10 @@ function clampInt(raw, fallback, min, max) {
 }
 function normalizeSettings(raw) {
   const data = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  const bool = (key) => typeof data[key] === "boolean" ? data[key] : DEFAULT_SETTINGS[key];
+  const bool = (key) => {
+    const rawVal = data[key];
+    return typeof rawVal === "boolean" ? rawVal : Boolean(DEFAULT_SETTINGS[key]);
+  };
   const rawExcluded = Array.isArray(data.excludedPaths) ? data.excludedPaths.map((v) => normalizePathPrefix(String(v || ""))).filter(Boolean) : [];
   const mergedExcluded = Array.from(/* @__PURE__ */ new Set([...BUILTIN_EXCLUDED_PATHS, ...rawExcluded]));
   const wheelZoomMode = WHEEL_MODES.includes(data.wheelZoomMode) ? data.wheelZoomMode : DEFAULT_SETTINGS.wheelZoomMode;
@@ -210,9 +207,9 @@ var WorkbenchSettingsTab = class extends import_obsidian2.PluginSettingTab {
     new import_obsidian2.Setting(containerEl).setName(t("\u663E\u793A\u7F29\u7565\u5C0F\u5730\u56FE\uFF08Minimap\uFF09", "Show minimap")).setDesc(t("\u5728\u706F\u7BB1\u53F3\u4E0B\u89D2\u663E\u793A\u5B9E\u65F6\u7F29\u7565\u56FE\u4E0E\u89C6\u53E3\u5B9A\u4F4D\u6846\uFF0C\u9002\u5408\u5927\u578B ER \u56FE\u548C\u6D41\u7A0B\u56FE\u6F2B\u6E38\u3002", "Display a draggable viewport minimap in the bottom-right corner.")).addToggle((ctrl) => ctrl.setValue(this.host.settings.showMinimap).onChange((v) => this.host.updateSettings({ showMinimap: v })));
     new import_obsidian2.Setting(containerEl).setName(t("\u53CC\u51FB\u56FE\u8868\u76F4\u63A5\u6253\u5F00\u706F\u7BB1", "Double-click diagram to open lightbox")).setDesc(t("\u5728\u9605\u8BFB\u89C6\u56FE\u53CC\u51FB Mermaid SVG \u5373\u53EF\u5FEB\u901F\u8FDB\u5165\u6C89\u6D78\u706F\u7BB1\u3002", "Double-click a rendered Mermaid SVG in Reading view to launch the lightbox.")).addToggle((ctrl) => ctrl.setValue(this.host.settings.doubleClickToOpen).onChange((v) => this.host.updateSettings({ doubleClickToOpen: v })));
     heading(t("\u5BBD\u8868\u5DE5\u4F5C\u53F0\u8BBE\u7F6E", "Wide-table workbench"));
-    new import_obsidian2.Setting(containerEl).setName(t("\u9875\u5185\u589E\u5F3A\u6700\u5C0F\u5217\u6570\u9608\u503C", "Inline enhancement min columns")).setDesc(t("\u9605\u8BFB\u89C6\u56FE\u8868\u683C\u5217\u6570\u8FBE\u5230\u8BE5\u503C\uFF08\u6216\u884C\u6570\u8FBE\u6807\uFF09\u65F6\u81EA\u52A8\u6302\u8F7D\u9875\u5185\u589E\u5F3A\uFF0C\u5C0F\u8868\u4FDD\u6301\u7EAF\u51C0\u3002", "Enhance tables in Reading view when columns meet this threshold.")).addSlider((ctrl) => ctrl.setLimits(1, 15, 1).setValue(this.host.settings.inlineMinColumns).setDynamicTooltip().onChange((v) => this.host.updateSettings({ inlineMinColumns: v })));
-    new import_obsidian2.Setting(containerEl).setName(t("\u9875\u5185\u589E\u5F3A\u6700\u5C0F\u884C\u6570\u9608\u503C", "Inline enhancement min rows")).setDesc(t("\u9605\u8BFB\u89C6\u56FE\u8868\u683C\u6570\u636E\u884C\u6570\u8FBE\u5230\u8BE5\u503C\u65F6\u81EA\u52A8\u6302\u8F7D\u9875\u5185\u51BB\u7ED3\u4E0E\u7B5B\u9009\u5165\u53E3\u3002", "Enhance tables in Reading view when body rows meet this threshold.")).addSlider((ctrl) => ctrl.setLimits(1, 50, 1).setValue(this.host.settings.inlineMinRows).setDynamicTooltip().onChange((v) => this.host.updateSettings({ inlineMinRows: v })));
-    new import_obsidian2.Setting(containerEl).setName(t("\u9875\u5185\u51BB\u7ED3\u5BB9\u5668\u6700\u5927\u9AD8\u5EA6 (px)", "Inline sticky table max height (px)")).setDesc(t("\u5728\u9605\u8BFB\u89C6\u56FE\u5F00\u542F\u51BB\u7ED3\u8868\u5934\u65F6\uFF0C\u8868\u683C\u6EDA\u52A8\u533A\u57DF\u7684\u6700\u5927\u9AD8\u5EA6\u3002", "Maximum scroll height when sticky header is toggled inline.")).addSlider((ctrl) => ctrl.setLimits(260, 1e3, 20).setValue(this.host.settings.inlineMaxHeight).setDynamicTooltip().onChange((v) => this.host.updateSettings({ inlineMaxHeight: v })));
+    new import_obsidian2.Setting(containerEl).setName(t("\u9875\u5185\u589E\u5F3A\u6700\u5C0F\u5217\u6570\u9608\u503C", "Inline enhancement min columns")).setDesc(t("\u9605\u8BFB\u89C6\u56FE\u8868\u683C\u5217\u6570\u8FBE\u5230\u8BE5\u503C\uFF08\u6216\u884C\u6570\u8FBE\u6807\uFF09\u65F6\u81EA\u52A8\u6302\u8F7D\u9875\u5185\u589E\u5F3A\uFF0C\u5C0F\u8868\u4FDD\u6301\u7EAF\u51C0\u3002", "Enhance tables in Reading view when columns meet this threshold.")).addSlider((ctrl) => ctrl.setLimits(1, 15, 1).setValue(this.host.settings.inlineMinColumns).onChange((v) => this.host.updateSettings({ inlineMinColumns: v })));
+    new import_obsidian2.Setting(containerEl).setName(t("\u9875\u5185\u589E\u5F3A\u6700\u5C0F\u884C\u6570\u9608\u503C", "Inline enhancement min rows")).setDesc(t("\u9605\u8BFB\u89C6\u56FE\u8868\u683C\u6570\u636E\u884C\u6570\u8FBE\u5230\u8BE5\u503C\u65F6\u81EA\u52A8\u6302\u8F7D\u9875\u5185\u51BB\u7ED3\u4E0E\u7B5B\u9009\u5165\u53E3\u3002", "Enhance tables in Reading view when body rows meet this threshold.")).addSlider((ctrl) => ctrl.setLimits(1, 50, 1).setValue(this.host.settings.inlineMinRows).onChange((v) => this.host.updateSettings({ inlineMinRows: v })));
+    new import_obsidian2.Setting(containerEl).setName(t("\u9875\u5185\u51BB\u7ED3\u5BB9\u5668\u6700\u5927\u9AD8\u5EA6 (px)", "Inline sticky table max height (px)")).setDesc(t("\u5728\u9605\u8BFB\u89C6\u56FE\u5F00\u542F\u51BB\u7ED3\u8868\u5934\u65F6\uFF0C\u8868\u683C\u6EDA\u52A8\u533A\u57DF\u7684\u6700\u5927\u9AD8\u5EA6\u3002", "Maximum scroll height when sticky header is toggled inline.")).addSlider((ctrl) => ctrl.setLimits(260, 1e3, 20).setValue(this.host.settings.inlineMaxHeight).onChange((v) => this.host.updateSettings({ inlineMaxHeight: v })));
     new import_obsidian2.Setting(containerEl).setName(t("\u5DE5\u4F5C\u53F0\u9ED8\u8BA4\u51BB\u7ED3\u9996\u5217", "Freeze first column by default")).setDesc(t("\u6253\u5F00\u5BBD\u8868\u5168\u5C4F\u5DE5\u4F5C\u53F0\u65F6\u9ED8\u8BA4\u56FA\u5B9A\u7B2C\u4E00\u5217\uFF0C\u4FBF\u4E8E\u6A2A\u5411\u6838\u5BF9\u591A\u5217\u5B57\u6BB5\u3002", "Keep the first column sticky when opening the fullscreen table workbench.")).addToggle((ctrl) => ctrl.setValue(this.host.settings.defaultFreezeFirstCol).onChange((v) => this.host.updateSettings({ defaultFreezeFirstCol: v })));
     heading(t("\u5B89\u5168\u9694\u79BB\u4E0E\u8C41\u514D", "Safety & exclusions"));
     new import_obsidian2.Setting(containerEl).setName(t("\u6392\u9664\u76EE\u5F55\uFF08\u6BCF\u884C\u4E00\u4E2A\u8DEF\u5F84\u524D\u7F00\uFF09", "Excluded folders (one path prefix per line)")).setDesc(t("\u547D\u4E2D\u524D\u7F00\u7684\u7B14\u8BB0\u4E0E\u5D4C\u5165\u5757\u5C06\u5B8C\u5168\u8DF3\u8FC7\u5DE5\u4F5C\u53F0\u589E\u5F3A\uFF08\u5982 Secrets/\u3001Credentials/ \u7B49\u654F\u611F\u76EE\u5F55\uFF09\u3002", "Notes and embeds under these path prefixes are completely skipped (e.g. Secrets/, Credentials/).")).addTextArea((ctrl) => {
@@ -293,6 +290,16 @@ var INLINE_STYLE_PROPS = [
 ];
 var PRESERVE_NONE_PROPS = /* @__PURE__ */ new Set(["fill", "stroke"]);
 var DARK_INK = "#1e293b";
+var WHITE_PAPER = "#ffffff";
+var NONE_VALUE = "none";
+function applyDynamicStyle(el, prop, value) {
+  const withHelper = el;
+  if (typeof withHelper.setCssProps === "function") {
+    withHelper.setCssProps({ [prop]: value });
+  } else {
+    el.style.setProperty(prop, value);
+  }
+}
 function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -397,16 +404,16 @@ function adaptSvgForWhiteBackground(sourceSvg, targetSvg, win) {
     const cs = win.getComputedStyle(src);
     if (src.matches(".relationshipLabelBox")) {
       if (isOpaqueDarkColor(cs.fill)) {
-        dst.style.setProperty("fill", "#ffffff");
+        applyDynamicStyle(dst, "fill", WHITE_PAPER);
       }
       continue;
     }
     if (src.matches(".edgeLabel, .labelBkg") || src.closest(".edgeLabel, .labelBkg")) {
       if (isOpaqueDarkColor(cs.backgroundColor)) {
-        dst.style.setProperty("background-color", "#ffffff");
+        applyDynamicStyle(dst, "background-color", WHITE_PAPER);
       }
       if (isOpaqueDarkColor(cs.fill) && tag === "rect") {
-        dst.style.setProperty("fill", "#ffffff");
+        applyDynamicStyle(dst, "fill", WHITE_PAPER);
       }
     }
     if (tag === "text" || tag === "tspan") {
@@ -559,7 +566,7 @@ function inlineComputedStyles(sourceRoot, cloneRoot, win) {
   }
 }
 function buildStandaloneSvgString(sourceSvg, bgMode, padding = 24) {
-  const doc = sourceSvg.ownerDocument || document;
+  const doc = sourceSvg.ownerDocument;
   const win = doc.defaultView || window;
   const dims = measureSvgDimensions(sourceSvg);
   const totalW = dims.width + padding * 2;
@@ -577,8 +584,8 @@ function buildStandaloneSvgString(sourceSvg, bgMode, padding = 24) {
     "viewBox",
     `${dims.minX - padding} ${dims.minY - padding} ${totalW} ${totalH}`
   );
-  clone.style.maxWidth = "none";
-  clone.style.maxHeight = "none";
+  applyDynamicStyle(clone, "max-width", NONE_VALUE);
+  applyDynamicStyle(clone, "max-height", NONE_VALUE);
   const bgColor = resolveExportBackground(doc, bgMode);
   if (bgColor) {
     const bgRect = doc.createElementNS("http://www.w3.org/2000/svg", "rect");
@@ -598,7 +605,7 @@ ${serialized}`;
   return { svgString: serialized, width: totalW, height: totalH };
 }
 async function renderSvgToPngBlob(sourceSvg, bgMode, requestedScale) {
-  const doc = sourceSvg.ownerDocument || document;
+  const doc = sourceSvg.ownerDocument;
   const { svgString, width, height } = buildStandaloneSvgString(sourceSvg, bgMode);
   const { scale, clamped } = computeSafeExportScale(width, height, requestedScale);
   const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
@@ -634,16 +641,17 @@ function triggerBlobDownload(doc, blob, filename) {
   const a = doc.createElement("a");
   a.href = url;
   a.download = filename;
-  a.style.display = "none";
+  a.className = "qs-wb-hidden-download";
   doc.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1e3);
+  const win = doc.defaultView || window;
+  win.setTimeout(() => URL.revokeObjectURL(url), 1e3);
 }
 async function copyPngBlobToClipboard(win, blob) {
   try {
-    const ClipboardItemCtor = win.ClipboardItem || globalThis.ClipboardItem;
-    const clipboard = win.navigator?.clipboard || globalThis.navigator?.clipboard;
+    const ClipboardItemCtor = win.ClipboardItem || window.ClipboardItem;
+    const clipboard = win.navigator?.clipboard || window.navigator?.clipboard;
     if (!ClipboardItemCtor || !clipboard || typeof clipboard.write !== "function") {
       return false;
     }
@@ -874,7 +882,7 @@ function enhanceInlineTable(table, child, settings, callbacks) {
   const host = table.parentElement?.classList.contains("table-wrapper") ? table.parentElement : table.closest(".el-table") || table.parentElement;
   if (!host) return false;
   table.dataset.qsWbTable = "1";
-  const doc = table.ownerDocument || document;
+  const doc = table.ownerDocument;
   const bar = doc.createElement("div");
   bar.className = "qs-wb-inline-bar qs-wb-table-bar";
   const meta = doc.createElement("span");
@@ -937,19 +945,21 @@ function enhanceInlineTable(table, child, settings, callbacks) {
     evt.stopPropagation();
     setFrozen(!frozen);
   });
-  child.registerDomEvent(btnCopy, "click", async (evt) => {
+  child.registerDomEvent(btnCopy, "click", (evt) => {
     evt.preventDefault();
     evt.stopPropagation();
-    try {
-      const grid = extractTableGrid(table);
-      const visibleRows = grid.rows.filter((_, idx) => !bodyRows[idx]?.classList.contains("qs-wb-row-hidden"));
-      const tsv = serializeToTsv(grid.columns, visibleRows);
-      const nav = doc.defaultView?.navigator || navigator;
-      await nav.clipboard.writeText(tsv);
-      new import_obsidian4.Notice(t(`\u5DF2\u590D\u5236 ${visibleRows.length} \u884C TSV\uFF08\u53EF\u76F4\u8D34 Excel/\u9489\u9489\uFF09`, `Copied ${visibleRows.length} rows as TSV`));
-    } catch {
-      new import_obsidian4.Notice(t("\u590D\u5236 TSV \u5931\u8D25", "Failed to copy TSV"));
-    }
+    void (async () => {
+      try {
+        const grid = extractTableGrid(table);
+        const visibleRows = grid.rows.filter((_, idx) => !bodyRows[idx]?.classList.contains("qs-wb-row-hidden"));
+        const tsv = serializeToTsv(grid.columns, visibleRows);
+        const nav = doc.defaultView?.navigator || navigator;
+        await nav.clipboard.writeText(tsv);
+        new import_obsidian4.Notice(t(`\u5DF2\u590D\u5236 ${visibleRows.length} \u884C TSV\uFF08\u53EF\u76F4\u8D34 Excel/\u9489\u9489\uFF09`, `Copied ${visibleRows.length} rows as TSV`));
+      } catch {
+        new import_obsidian4.Notice(t("\u590D\u5236 TSV \u5931\u8D25", "Failed to copy TSV"));
+      }
+    })();
   });
   child.registerDomEvent(btnExpand, "click", (evt) => {
     evt.preventDefault();
@@ -968,6 +978,9 @@ function enhanceInlineTable(table, child, settings, callbacks) {
 }
 
 // src/detectors/reading-detector.ts
+function isTableElement(el) {
+  return el.tagName.toLowerCase() === "table";
+}
 function noteTitleFromPath(sourcePath) {
   const base = sourcePath.split("/").pop() || "Note";
   return base.replace(/\.md$/i, "") || "Note";
@@ -975,7 +988,7 @@ function noteTitleFromPath(sourcePath) {
 function attachMermaidTrigger(mermaidBox, child, title, actions) {
   if (mermaidBox.dataset.qsWbMermaid === "1") return false;
   if (isProtectedMermaidElement(mermaidBox)) return false;
-  const doc = mermaidBox.ownerDocument || document;
+  const doc = mermaidBox.ownerDocument;
   const win = doc.defaultView || window;
   const mountForSvg = (svg) => {
     if (mermaidBox.dataset.qsWbMermaid === "1") return;
@@ -1014,23 +1027,25 @@ function attachMermaidTrigger(mermaidBox, child, title, actions) {
       const target = getLiveSvg() || svg;
       actions.openMermaid(target, title);
     });
-    child.registerDomEvent(btnPng, "click", async (evt) => {
+    child.registerDomEvent(btnPng, "click", (evt) => {
       evt.preventDefault();
       evt.stopPropagation();
       const target = getLiveSvg() || svg;
       const cur = actions.getSettings();
-      try {
-        const { blob, scale } = await renderSvgToPngBlob(target, cur.defaultExportBg, cur.pngScale);
-        const copied = await copyPngBlobToClipboard(win, blob);
-        if (copied) {
-          new import_obsidian5.Notice(t(`\u5DF2\u590D\u5236 ${scale}\xD7 \u9AD8\u6E05 PNG`, `Copied ${scale}x PNG`));
-        } else {
-          triggerBlobDownload(doc, blob, `${title}-${scale}x.png`);
-          new import_obsidian5.Notice(t("\u526A\u8D34\u677F\u4E0D\u53EF\u7528\uFF0C\u5DF2\u81EA\u52A8\u4E0B\u8F7D PNG", "Clipboard unavailable; downloaded PNG"));
+      void (async () => {
+        try {
+          const { blob, scale } = await renderSvgToPngBlob(target, cur.defaultExportBg, cur.pngScale);
+          const copied = await copyPngBlobToClipboard(win, blob);
+          if (copied) {
+            new import_obsidian5.Notice(t(`\u5DF2\u590D\u5236 ${scale}\xD7 \u9AD8\u6E05 PNG`, `Copied ${scale}x PNG`));
+          } else {
+            triggerBlobDownload(doc, blob, `${title}-${scale}x.png`);
+            new import_obsidian5.Notice(t("\u526A\u8D34\u677F\u4E0D\u53EF\u7528\uFF0C\u5DF2\u81EA\u52A8\u4E0B\u8F7D PNG", "Clipboard unavailable; downloaded PNG"));
+          }
+        } catch {
+          new import_obsidian5.Notice(t("PNG \u5BFC\u51FA\u53D7\u9650\uFF0C\u8BF7\u6539\u7528 SVG", "PNG export restricted; try SVG"));
         }
-      } catch {
-        new import_obsidian5.Notice(t("PNG \u5BFC\u51FA\u53D7\u9650\uFF0C\u8BF7\u6539\u7528 SVG", "PNG export restricted; try SVG"));
-      }
+      })();
     });
     child.registerDomEvent(btnSvg, "click", (evt) => {
       evt.preventDefault();
@@ -1122,7 +1137,7 @@ function processReadingSection(element, context, actions) {
     }
   }
   if (settings.enableTableWorkbench && !hasExemptFrontmatterClass(context.frontmatter, ["qs-home"])) {
-    const tables = element.matches("table") ? [element] : Array.from(element.querySelectorAll("table"));
+    const tables = isTableElement(element) ? [element] : Array.from(element.querySelectorAll("table"));
     for (const table of tables) {
       if (isProtectedTableElement(table)) continue;
       if (enhanceInlineTable(table, child, settings, {
@@ -1254,7 +1269,7 @@ var LivePreviewTriggerManager = class {
   }
   mountTrigger(host, kind, onClick) {
     host.dataset.qsWbLp = "1";
-    const doc = host.ownerDocument || document;
+    const doc = host.ownerDocument;
     const wrap = doc.createElement("div");
     wrap.className = `${LP_TRIGGER_CLASS} is-${kind}`;
     const label = kind === "mermaid" ? t("\u5728 Mermaid \u706F\u7BB1\u4E2D\u6253\u5F00", "Open in Mermaid lightbox") : t("\u5728\u5BBD\u8868\u5DE5\u4F5C\u53F0\u6253\u5F00\uFF08\u53EA\u8BFB\uFF09", "Open in wide-table workbench (read-only)");
@@ -1438,10 +1453,7 @@ function createMermaidMinimap(doc, sourceSvg, onNavigate) {
   const previewSvg = cloneSvgWithScopedId(sourceSvg, "qs-mini");
   previewSvg.removeAttribute("width");
   previewSvg.removeAttribute("height");
-  previewSvg.style.width = "100%";
-  previewSvg.style.height = "100%";
-  previewSvg.style.maxWidth = "100%";
-  previewSvg.style.maxHeight = "100%";
+  previewSvg.classList.add("qs-wb-minimap-svg");
   previewSvg.setAttribute("preserveAspectRatio", "xMidYMid meet");
   previewSvg.setAttribute("aria-hidden", "true");
   wrap.appendChild(previewSvg);
@@ -1499,7 +1511,7 @@ function createMermaidMinimap(doc, sourceSvg, onNavigate) {
 // src/mermaid/mermaid-modal.ts
 var BG_ORDER = ["theme", "white", "transparent"];
 function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
-  const doc = sourceSvg.ownerDocument || document;
+  const doc = sourceSvg.ownerDocument;
   const win = doc.defaultView || window;
   const prevFocused = doc.activeElement;
   const overlay = doc.createElement("div");
@@ -1571,11 +1583,9 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
     const nextClone = cloneSvgWithScopedId(sourceSvg, "qs-live");
     nextClone.setAttribute("width", String(dims.width));
     nextClone.setAttribute("height", String(dims.height));
+    nextClone.classList.add("qs-wb-live-svg");
     nextClone.style.width = `${dims.width}px`;
     nextClone.style.height = `${dims.height}px`;
-    nextClone.style.maxWidth = "none";
-    nextClone.style.maxHeight = "none";
-    nextClone.style.display = "block";
     if (bgMode === "white" && isDarkThemeDocument(doc) && sourceSvg.isConnected) {
       adaptSvgForWhiteBackground(sourceSvg, nextClone, win);
     }
@@ -1994,7 +2004,7 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
   const title = opts.title || "Table";
   const onClose = opts.onClose;
   const onOpenInternalLink = opts.onOpenInternalLink;
-  const doc = sourceTable.ownerDocument || document;
+  const doc = sourceTable.ownerDocument;
   const win = doc.defaultView || window;
   const prevFocused = doc.activeElement;
   const grid = extractTableGrid(sourceTable);
@@ -2107,13 +2117,15 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
       copyBtn.type = "button";
       copyBtn.className = "qs-wb-mini-copy";
       copyBtn.textContent = t("\u590D\u5236", "Copy");
-      copyBtn.addEventListener("click", async () => {
-        try {
-          await (win.navigator?.clipboard || navigator.clipboard).writeText(cell.text);
-          new import_obsidian8.Notice(t(`\u5DF2\u590D\u5236\u300C${col.label}\u300D`, `Copied "${col.label}"`));
-        } catch {
-          new import_obsidian8.Notice(t("\u590D\u5236\u5931\u8D25", "Copy failed"));
-        }
+      copyBtn.addEventListener("click", () => {
+        void (async () => {
+          try {
+            await (win.navigator?.clipboard || navigator.clipboard).writeText(cell.text);
+            new import_obsidian8.Notice(t(`\u5DF2\u590D\u5236\u300C${col.label}\u300D`, `Copied "${col.label}"`));
+          } catch {
+            new import_obsidian8.Notice(t("\u590D\u5236\u5931\u8D25", "Copy failed"));
+          }
+        })();
       });
       top.append(keyEl, copyBtn);
       const valEl = doc.createElement("div");
@@ -2381,7 +2393,7 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
   btnDrawer.addEventListener("click", () => toggleDrawer());
   drawerCloseBtn.addEventListener("click", () => toggleDrawer(false));
   tbodyEl.addEventListener("click", (evt) => {
-    const tr = evt.target?.closest?.("tr.qs-wb-data-row");
+    const tr = evt.target?.closest("tr.qs-wb-data-row") ?? null;
     if (!tr || tr.dataset.fidx === void 0) return;
     selectedFilteredIdx = Number(tr.dataset.fidx);
     toggleDrawer(true);
@@ -2394,14 +2406,16 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
   gridWrap.addEventListener("scroll", onScroll, { passive: true });
   const safeSlug = title.replace(/[^\w\u4e00-\u9fff-]+/g, "-").replace(/^-+|-+$/g, "") || "table";
   const getVisibleIds = () => getActiveCols().map((c) => c.index);
-  btnTsv.addEventListener("click", async () => {
-    try {
-      const tsv = serializeToTsv(grid.columns, filteredRows, getVisibleIds());
-      await (win.navigator?.clipboard || navigator.clipboard).writeText(tsv);
-      new import_obsidian8.Notice(t(`\u5DF2\u590D\u5236 ${filteredRows.length} \u884C TSV`, `Copied ${filteredRows.length} rows as TSV`));
-    } catch {
-      new import_obsidian8.Notice(t("\u590D\u5236 TSV \u5931\u8D25", "Failed to copy TSV"));
-    }
+  btnTsv.addEventListener("click", () => {
+    void (async () => {
+      try {
+        const tsv = serializeToTsv(grid.columns, filteredRows, getVisibleIds());
+        await (win.navigator?.clipboard || navigator.clipboard).writeText(tsv);
+        new import_obsidian8.Notice(t(`\u5DF2\u590D\u5236 ${filteredRows.length} \u884C TSV`, `Copied ${filteredRows.length} rows as TSV`));
+      } catch {
+        new import_obsidian8.Notice(t("\u590D\u5236 TSV \u5931\u8D25", "Failed to copy TSV"));
+      }
+    })();
   });
   btnCsv.addEventListener("click", () => {
     const csv = serializeToCsv(grid.columns, filteredRows, getVisibleIds(), true);
@@ -2409,14 +2423,16 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
     triggerBlobDownload(doc, blob, `${safeSlug}.csv`);
     new import_obsidian8.Notice(t(`\u5DF2\u5BFC\u51FA ${filteredRows.length} \u884C CSV (UTF-8 BOM)`, `Exported ${filteredRows.length} rows as CSV`));
   });
-  btnMd.addEventListener("click", async () => {
-    try {
-      const md = serializeToMarkdown(grid.columns, filteredRows, getVisibleIds());
-      await (win.navigator?.clipboard || navigator.clipboard).writeText(md);
-      new import_obsidian8.Notice(t(`\u5DF2\u590D\u5236 ${filteredRows.length} \u884C Markdown \u5B50\u8868`, `Copied ${filteredRows.length} rows as Markdown`));
-    } catch {
-      new import_obsidian8.Notice(t("\u590D\u5236 Markdown \u5931\u8D25", "Failed to copy Markdown"));
-    }
+  btnMd.addEventListener("click", () => {
+    void (async () => {
+      try {
+        const md = serializeToMarkdown(grid.columns, filteredRows, getVisibleIds());
+        await (win.navigator?.clipboard || navigator.clipboard).writeText(md);
+        new import_obsidian8.Notice(t(`\u5DF2\u590D\u5236 ${filteredRows.length} \u884C Markdown \u5B50\u8868`, `Copied ${filteredRows.length} rows as Markdown`));
+      } catch {
+        new import_obsidian8.Notice(t("\u590D\u5236 Markdown \u5931\u8D25", "Failed to copy Markdown"));
+      }
+    })();
   });
   const onKeyDown = (evt) => {
     if (evt.key === "Escape") {

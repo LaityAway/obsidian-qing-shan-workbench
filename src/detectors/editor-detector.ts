@@ -146,7 +146,7 @@ export class LivePreviewTriggerManager {
     onClick: () => void,
   ): void {
     host.dataset.qsWbLp = '1';
-    const doc = host.ownerDocument || document;
+    const doc = host.ownerDocument;
     const wrap = doc.createElement('div');
     wrap.className = `${LP_TRIGGER_CLASS} is-${kind}`;
 

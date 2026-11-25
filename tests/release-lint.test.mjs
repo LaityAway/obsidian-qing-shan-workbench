@@ -35,7 +35,7 @@ test('built main.js avoids deprecated activeLeaf, innerHTML, console.log, and No
 
 test('built styles.css hides all workbench controls under @media print and .print', () => {
   const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
-  assert.match(css, /@media print[\s\S]*\.qs-wb-overlay[\s\S]*display:\s*none\s*!important/);
+  assert.match(css, /@media print[\s\S]*\.qs-wb-overlay[\s\S]*display:\s*none/);
   assert.match(css, /\.print\s+\.qs-wb-overlay/);
 });
 

@@ -31,6 +31,17 @@ const INLINE_STYLE_PROPS: readonly string[] = [
 // Properties where "none" is semantically critical in SVG (default fill is black!).
 const PRESERVE_NONE_PROPS = new Set(['fill', 'stroke']);
 const DARK_INK = '#1e293b';
+const WHITE_PAPER = '#ffffff';
+const NONE_VALUE = 'none';
+
+function applyDynamicStyle(el: HTMLElement | SVGElement, prop: string, value: string): void {
+  const withHelper = el as HTMLElement & { setCssProps?: (props: Record<string, string>) => void };
+  if (typeof withHelper.setCssProps === 'function') {
+    withHelper.setCssProps({ [prop]: value });
+  } else {
+    el.style.setProperty(prop, value);
+  }
+}
 
 export interface RgbaColor {
   r: number;
@@ -196,16 +207,16 @@ export function adaptSvgForWhiteBackground(
     // 1. Label mask backgrounds (.edgeLabel / .labelBkg / .relationshipLabelBox)
     if (src.matches('.relationshipLabelBox')) {
       if (isOpaqueDarkColor(cs.fill)) {
-        dst.style.setProperty('fill', '#ffffff');
+        applyDynamicStyle(dst, 'fill', WHITE_PAPER);
       }
       continue;
     }
     if (src.matches('.edgeLabel, .labelBkg') || src.closest('.edgeLabel, .labelBkg')) {
       if (isOpaqueDarkColor(cs.backgroundColor)) {
-        dst.style.setProperty('background-color', '#ffffff');
+        applyDynamicStyle(dst, 'background-color', WHITE_PAPER);
       }
       if (isOpaqueDarkColor(cs.fill) && tag === 'rect') {
-        dst.style.setProperty('fill', '#ffffff');
+        applyDynamicStyle(dst, 'fill', WHITE_PAPER);
       }
     }
 
@@ -293,7 +304,7 @@ export function cloneSvgWithScopedId(sourceSvg: SVGSVGElement, suffix: string): 
             if (mapped) el.setAttribute(attr, `#${mapped}`);
           }
         } else if (val.includes('url(#')) {
-          const next = val.replace(/url\(#([^)]+)\)/g, (full, refId) => {
+          const next = val.replace(/url\(#([^)]+)\)/g, (full: string, refId: string) => {
             const mapped = idMap.get(refId);
             return mapped ? `url(#${mapped})` : full;
           });
@@ -390,7 +401,7 @@ export function buildStandaloneSvgString(
   bgMode: ExportBgMode,
   padding = 24,
 ): { svgString: string; width: number; height: number } {
-  const doc = sourceSvg.ownerDocument || document;
+  const doc = sourceSvg.ownerDocument;
   const win = doc.defaultView || window;
   const dims = measureSvgDimensions(sourceSvg);
   const totalW = dims.width + padding * 2;
@@ -410,8 +421,8 @@ export function buildStandaloneSvgString(
     'viewBox',
     `${dims.minX - padding} ${dims.minY - padding} ${totalW} ${totalH}`,
   );
-  clone.style.maxWidth = 'none';
-  clone.style.maxHeight = 'none';
+  applyDynamicStyle(clone, 'max-width', NONE_VALUE);
+  applyDynamicStyle(clone, 'max-height', NONE_VALUE);
 
   const bgColor = resolveExportBackground(doc, bgMode);
   if (bgColor) {
@@ -437,7 +448,7 @@ export async function renderSvgToPngBlob(
   bgMode: ExportBgMode,
   requestedScale: PngScale,
 ): Promise<{ blob: Blob; scale: number; clamped: boolean }> {
-  const doc = sourceSvg.ownerDocument || document;
+  const doc = sourceSvg.ownerDocument;
   const { svgString, width, height } = buildStandaloneSvgString(sourceSvg, bgMode);
   const { scale, clamped } = computeSafeExportScale(width, height, requestedScale);
 
@@ -478,18 +489,19 @@ export function triggerBlobDownload(doc: Document, blob: Blob, filename: string)
   const a = doc.createElement('a');
   a.href = url;
   a.download = filename;
-  a.style.display = 'none';
+  a.className = 'qs-wb-hidden-download';
   doc.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const win = doc.defaultView || window;
+  win.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 export async function copyPngBlobToClipboard(win: Window, blob: Blob): Promise<boolean> {
   try {
     const ClipboardItemCtor = (win as unknown as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
-      || globalThis.ClipboardItem;
-    const clipboard = win.navigator?.clipboard || globalThis.navigator?.clipboard;
+      || window.ClipboardItem;
+    const clipboard = win.navigator?.clipboard || window.navigator?.clipboard;
     if (!ClipboardItemCtor || !clipboard || typeof clipboard.write !== 'function') {
       return false;
     }

@@ -24,6 +24,10 @@ export interface DetectorActions {
   openTable(table: HTMLTableElement, title: string, sourcePath: string): void;
 }
 
+function isTableElement(el: Element): el is HTMLTableElement {
+  return el.tagName.toLowerCase() === 'table';
+}
+
 function noteTitleFromPath(sourcePath: string): string {
   const base = sourcePath.split('/').pop() || 'Note';
   return base.replace(/\.md$/i, '') || 'Note';
@@ -38,7 +42,7 @@ function attachMermaidTrigger(
   if (mermaidBox.dataset.qsWbMermaid === '1') return false;
   if (isProtectedMermaidElement(mermaidBox)) return false;
 
-  const doc = mermaidBox.ownerDocument || document;
+  const doc = mermaidBox.ownerDocument;
   const win = doc.defaultView || window;
 
   const mountForSvg = (svg: SVGSVGElement): void => {
@@ -84,23 +88,25 @@ function attachMermaidTrigger(
       actions.openMermaid(target, title);
     });
 
-    child.registerDomEvent(btnPng, 'click', async evt => {
+    child.registerDomEvent(btnPng, 'click', evt => {
       evt.preventDefault();
       evt.stopPropagation();
       const target = getLiveSvg() || svg;
       const cur = actions.getSettings();
-      try {
-        const { blob, scale } = await renderSvgToPngBlob(target, cur.defaultExportBg, cur.pngScale);
-        const copied = await copyPngBlobToClipboard(win, blob);
-        if (copied) {
-          new Notice(t(`已复制 ${scale}× 高清 PNG`, `Copied ${scale}x PNG`));
-        } else {
-          triggerBlobDownload(doc, blob, `${title}-${scale}x.png`);
-          new Notice(t('剪贴板不可用，已自动下载 PNG', 'Clipboard unavailable; downloaded PNG'));
+      void (async () => {
+        try {
+          const { blob, scale } = await renderSvgToPngBlob(target, cur.defaultExportBg, cur.pngScale);
+          const copied = await copyPngBlobToClipboard(win, blob);
+          if (copied) {
+            new Notice(t(`已复制 ${scale}× 高清 PNG`, `Copied ${scale}x PNG`));
+          } else {
+            triggerBlobDownload(doc, blob, `${title}-${scale}x.png`);
+            new Notice(t('剪贴板不可用，已自动下载 PNG', 'Clipboard unavailable; downloaded PNG'));
+          }
+        } catch {
+          new Notice(t('PNG 导出受限，请改用 SVG', 'PNG export restricted; try SVG'));
         }
-      } catch {
-        new Notice(t('PNG 导出受限，请改用 SVG', 'PNG export restricted; try SVG'));
-      }
+      })();
     });
 
     child.registerDomEvent(btnSvg, 'click', evt => {
@@ -213,8 +219,8 @@ export function processReadingSection(
   }
 
   if (settings.enableTableWorkbench && !hasExemptFrontmatterClass(context.frontmatter as Record<string, unknown> | undefined, ['qs-home'])) {
-    const tables = element.matches('table')
-      ? [element as HTMLTableElement]
+    const tables: HTMLTableElement[] = isTableElement(element)
+      ? [element]
       : Array.from(element.querySelectorAll<HTMLTableElement>('table'));
     for (const table of tables) {
       if (isProtectedTableElement(table)) continue;

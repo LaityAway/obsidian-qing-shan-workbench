@@ -52,8 +52,10 @@ export function normalizeSettings(raw: unknown): WorkbenchSettings {
   const data = raw && typeof raw === 'object' && !Array.isArray(raw)
     ? (raw as Record<string, unknown>)
     : {};
-  const bool = (key: keyof WorkbenchSettings): boolean =>
-    typeof data[key] === 'boolean' ? (data[key] as boolean) : (DEFAULT_SETTINGS[key] as boolean);
+  const bool = (key: keyof WorkbenchSettings): boolean => {
+    const rawVal = data[key];
+    return typeof rawVal === 'boolean' ? rawVal : Boolean(DEFAULT_SETTINGS[key]);
+  };
 
   const rawExcluded = Array.isArray(data.excludedPaths)
     ? data.excludedPaths.map(v => normalizePathPrefix(String(v || ''))).filter(Boolean)
@@ -192,7 +194,6 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
       .addSlider(ctrl => ctrl
         .setLimits(1, 15, 1)
         .setValue(this.host.settings.inlineMinColumns)
-        .setDynamicTooltip()
         .onChange(v => this.host.updateSettings({ inlineMinColumns: v })));
 
     new Setting(containerEl)
@@ -201,7 +202,6 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
       .addSlider(ctrl => ctrl
         .setLimits(1, 50, 1)
         .setValue(this.host.settings.inlineMinRows)
-        .setDynamicTooltip()
         .onChange(v => this.host.updateSettings({ inlineMinRows: v })));
 
     new Setting(containerEl)
@@ -210,7 +210,6 @@ export class WorkbenchSettingsTab extends PluginSettingTab {
       .addSlider(ctrl => ctrl
         .setLimits(260, 1000, 20)
         .setValue(this.host.settings.inlineMaxHeight)
-        .setDynamicTooltip()
         .onChange(v => this.host.updateSettings({ inlineMaxHeight: v })));
 
     new Setting(containerEl)

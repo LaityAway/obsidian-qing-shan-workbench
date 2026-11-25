@@ -28,13 +28,13 @@ export function enhanceInlineTable(
     return false;
   }
 
-  const host = (table.parentElement?.classList.contains('table-wrapper')
+  const host = table.parentElement?.classList.contains('table-wrapper')
     ? table.parentElement
-    : table.closest('.el-table') || table.parentElement) as HTMLElement | null;
+    : table.closest<HTMLElement>('.el-table') || table.parentElement;
   if (!host) return false;
 
   table.dataset.qsWbTable = '1';
-  const doc = table.ownerDocument || document;
+  const doc = table.ownerDocument;
 
   const bar = doc.createElement('div');
   bar.className = 'qs-wb-inline-bar qs-wb-table-bar';
@@ -106,19 +106,21 @@ export function enhanceInlineTable(
     evt.stopPropagation();
     setFrozen(!frozen);
   });
-  child.registerDomEvent(btnCopy, 'click', async evt => {
+  child.registerDomEvent(btnCopy, 'click', evt => {
     evt.preventDefault();
     evt.stopPropagation();
-    try {
-      const grid = extractTableGrid(table);
-      const visibleRows = grid.rows.filter((_, idx) => !bodyRows[idx]?.classList.contains('qs-wb-row-hidden'));
-      const tsv = serializeToTsv(grid.columns, visibleRows);
-      const nav = doc.defaultView?.navigator || navigator;
-      await nav.clipboard.writeText(tsv);
-      new Notice(t(`已复制 ${visibleRows.length} 行 TSV（可直贴 Excel/钉钉）`, `Copied ${visibleRows.length} rows as TSV`));
-    } catch {
-      new Notice(t('复制 TSV 失败', 'Failed to copy TSV'));
-    }
+    void (async () => {
+      try {
+        const grid = extractTableGrid(table);
+        const visibleRows = grid.rows.filter((_, idx) => !bodyRows[idx]?.classList.contains('qs-wb-row-hidden'));
+        const tsv = serializeToTsv(grid.columns, visibleRows);
+        const nav = doc.defaultView?.navigator || navigator;
+        await nav.clipboard.writeText(tsv);
+        new Notice(t(`已复制 ${visibleRows.length} 行 TSV（可直贴 Excel/钉钉）`, `Copied ${visibleRows.length} rows as TSV`));
+      } catch {
+        new Notice(t('复制 TSV 失败', 'Failed to copy TSV'));
+      }
+    })();
   });
   child.registerDomEvent(btnExpand, 'click', evt => {
     evt.preventDefault();

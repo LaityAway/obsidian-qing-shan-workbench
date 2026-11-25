@@ -4,6 +4,16 @@ All notable changes to **Qing Shan Workbench (青山 · 图表与宽表工作台
 
 ---
 
+## [1.0.1] - 2026-11-25
+
+### Fixed
+- **Obsidian Community Directory Automated Compliance**:
+  - Replaced all static inline style assignments in Mermaid export, minimap, and lightbox modal with scoped CSS classes and dynamic `setCssProps` helpers (`obsidianmd/no-static-styles-assignment`).
+  - Aligned `minAppVersion` to `1.8.7` matching `getLanguage()` API availability (`obsidianmd/no-unsupported-api`) and removed `globalThis` / `localStorage` fallback from `src/i18n.ts`.
+  - Wrapped async DOM click listeners cleanly to satisfy `obsidianmd/no-misused-promises`, replaced redundant `document` / `setTimeout` fallbacks with `ownerDocument` / `win.setTimeout`, and removed deprecated `SliderComponent.setDynamicTooltip()` calls.
+  - Eliminated all CSS `!important` declarations in favor of clean scoped specificity (`declaration-no-important`).
+  - Added official `obsidianmd/obsidian-workflows@v1` scanner validation to CI.
+
 ## [1.0.0] - 2026-11-25
 
 ### Added

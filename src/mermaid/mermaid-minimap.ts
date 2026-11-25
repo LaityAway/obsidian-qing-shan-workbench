@@ -26,10 +26,7 @@ export function createMermaidMinimap(
   const previewSvg = cloneSvgWithScopedId(sourceSvg, 'qs-mini');
   previewSvg.removeAttribute('width');
   previewSvg.removeAttribute('height');
-  previewSvg.style.width = '100%';
-  previewSvg.style.height = '100%';
-  previewSvg.style.maxWidth = '100%';
-  previewSvg.style.maxHeight = '100%';
+  previewSvg.classList.add('qs-wb-minimap-svg');
   previewSvg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   previewSvg.setAttribute('aria-hidden', 'true');
   wrap.appendChild(previewSvg);

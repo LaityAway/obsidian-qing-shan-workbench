@@ -41,7 +41,7 @@ export function openMermaidLightbox(
   title = 'Mermaid',
   onClose?: () => void,
 ): MermaidModalHandle {
-  const doc = sourceSvg.ownerDocument || document;
+  const doc = sourceSvg.ownerDocument;
   const win = doc.defaultView || window;
   const prevFocused = doc.activeElement as HTMLElement | null;
 
@@ -129,11 +129,9 @@ export function openMermaidLightbox(
     const nextClone = cloneSvgWithScopedId(sourceSvg, 'qs-live');
     nextClone.setAttribute('width', String(dims.width));
     nextClone.setAttribute('height', String(dims.height));
+    nextClone.classList.add('qs-wb-live-svg');
     nextClone.style.width = `${dims.width}px`;
     nextClone.style.height = `${dims.height}px`;
-    nextClone.style.maxWidth = 'none';
-    nextClone.style.maxHeight = 'none';
-    nextClone.style.display = 'block';
     if (bgMode === 'white' && isDarkThemeDocument(doc) && sourceSvg.isConnected) {
       adaptSvgForWhiteBackground(sourceSvg, nextClone, win);
     }

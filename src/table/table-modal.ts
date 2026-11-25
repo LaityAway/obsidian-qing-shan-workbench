@@ -30,7 +30,7 @@ export function openTableWorkbench(
   const title = opts.title || 'Table';
   const onClose = opts.onClose;
   const onOpenInternalLink = opts.onOpenInternalLink;
-  const doc = sourceTable.ownerDocument || document;
+  const doc = sourceTable.ownerDocument;
   const win = doc.defaultView || window;
   const prevFocused = doc.activeElement as HTMLElement | null;
   const grid: TableGrid = extractTableGrid(sourceTable);
@@ -172,13 +172,15 @@ export function openTableWorkbench(
       copyBtn.type = 'button';
       copyBtn.className = 'qs-wb-mini-copy';
       copyBtn.textContent = t('复制', 'Copy');
-      copyBtn.addEventListener('click', async () => {
-        try {
-          await (win.navigator?.clipboard || navigator.clipboard).writeText(cell.text);
-          new Notice(t(`已复制「${col.label}」`, `Copied "${col.label}"`));
-        } catch {
-          new Notice(t('复制失败', 'Copy failed'));
-        }
+      copyBtn.addEventListener('click', () => {
+        void (async () => {
+          try {
+            await (win.navigator?.clipboard || navigator.clipboard).writeText(cell.text);
+            new Notice(t(`已复制「${col.label}」`, `Copied "${col.label}"`));
+          } catch {
+            new Notice(t('复制失败', 'Copy failed'));
+          }
+        })();
       });
       top.append(keyEl, copyBtn);
 
@@ -474,7 +476,7 @@ export function openTableWorkbench(
   drawerCloseBtn.addEventListener('click', () => toggleDrawer(false));
 
   tbodyEl.addEventListener('click', evt => {
-    const tr = (evt.target as Element)?.closest?.('tr.qs-wb-data-row') as HTMLElement | null;
+    const tr = (evt.target as Element)?.closest<HTMLTableRowElement>('tr.qs-wb-data-row') ?? null;
     if (!tr || tr.dataset.fidx === undefined) return;
     selectedFilteredIdx = Number(tr.dataset.fidx);
     toggleDrawer(true);
@@ -490,14 +492,16 @@ export function openTableWorkbench(
   const safeSlug = title.replace(/[^\w\u4e00-\u9fff-]+/g, '-').replace(/^-+|-+$/g, '') || 'table';
   const getVisibleIds = () => getActiveCols().map(c => c.index);
 
-  btnTsv.addEventListener('click', async () => {
-    try {
-      const tsv = serializeToTsv(grid.columns, filteredRows, getVisibleIds());
-      await (win.navigator?.clipboard || navigator.clipboard).writeText(tsv);
-      new Notice(t(`已复制 ${filteredRows.length} 行 TSV`, `Copied ${filteredRows.length} rows as TSV`));
-    } catch {
-      new Notice(t('复制 TSV 失败', 'Failed to copy TSV'));
-    }
+  btnTsv.addEventListener('click', () => {
+    void (async () => {
+      try {
+        const tsv = serializeToTsv(grid.columns, filteredRows, getVisibleIds());
+        await (win.navigator?.clipboard || navigator.clipboard).writeText(tsv);
+        new Notice(t(`已复制 ${filteredRows.length} 行 TSV`, `Copied ${filteredRows.length} rows as TSV`));
+      } catch {
+        new Notice(t('复制 TSV 失败', 'Failed to copy TSV'));
+      }
+    })();
   });
 
   btnCsv.addEventListener('click', () => {
@@ -507,14 +511,16 @@ export function openTableWorkbench(
     new Notice(t(`已导出 ${filteredRows.length} 行 CSV (UTF-8 BOM)`, `Exported ${filteredRows.length} rows as CSV`));
   });
 
-  btnMd.addEventListener('click', async () => {
-    try {
-      const md = serializeToMarkdown(grid.columns, filteredRows, getVisibleIds());
-      await (win.navigator?.clipboard || navigator.clipboard).writeText(md);
-      new Notice(t(`已复制 ${filteredRows.length} 行 Markdown 子表`, `Copied ${filteredRows.length} rows as Markdown`));
-    } catch {
-      new Notice(t('复制 Markdown 失败', 'Failed to copy Markdown'));
-    }
+  btnMd.addEventListener('click', () => {
+    void (async () => {
+      try {
+        const md = serializeToMarkdown(grid.columns, filteredRows, getVisibleIds());
+        await (win.navigator?.clipboard || navigator.clipboard).writeText(md);
+        new Notice(t(`已复制 ${filteredRows.length} 行 Markdown 子表`, `Copied ${filteredRows.length} rows as Markdown`));
+      } catch {
+        new Notice(t('复制 Markdown 失败', 'Failed to copy Markdown'));
+      }
+    })();
   });
 
   const onKeyDown = (evt: KeyboardEvent): void => {
