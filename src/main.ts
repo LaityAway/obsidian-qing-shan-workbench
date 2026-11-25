@@ -46,7 +46,7 @@ class WorkbenchItemPicker extends FuzzySuggestModal<PickerItem> {
 export default class QingShanWorkbenchPlugin extends Plugin implements SettingsHost {
   settings: WorkbenchSettings = { ...DEFAULT_SETTINGS };
   private writeQueue: Promise<void> = Promise.resolve();
-  private activeModals = new Set<MermaidModalHandle | TableModalHandle>();
+  private activeModals = new Map<Document, MermaidModalHandle | TableModalHandle>();
   private trackedDocs = new Set<Document>();
   private lpManager: LivePreviewTriggerManager | null = null;
   private isAlive = true;
@@ -152,24 +152,45 @@ export default class QingShanWorkbenchPlugin extends Plugin implements SettingsH
     for (const doc of docs) this.applyBodyClassesToDoc(doc);
   }
 
+  private closeActiveModalInDoc(doc: Document): void {
+    const existing = this.activeModals.get(doc);
+    if (existing) {
+      this.activeModals.delete(doc);
+      existing.close();
+    }
+  }
+
   private launchMermaid(svg: SVGSVGElement, title: string): void {
+    const doc = svg.ownerDocument;
+    this.closeActiveModalInDoc(doc);
     const handle = openMermaidLightbox(svg, this.settings, title, () => {
-      this.activeModals.delete(handle);
+      if (this.activeModals.get(doc) === handle) this.activeModals.delete(doc);
     });
-    this.activeModals.add(handle);
+    this.activeModals.set(doc, handle);
   }
 
   private launchTable(table: HTMLTableElement, title: string, sourcePath: string): void {
+    const doc = table.ownerDocument;
+    this.closeActiveModalInDoc(doc);
     const handle = openTableWorkbench(table, this.settings, {
       title,
       onClose: () => {
-        this.activeModals.delete(handle);
+        if (this.activeModals.get(doc) === handle) this.activeModals.delete(doc);
       },
       onOpenInternalLink: href => {
         void this.app.workspace.openLinkText(href, sourcePath);
       },
     });
-    this.activeModals.add(handle);
+    this.activeModals.set(doc, handle);
+  }
+
+  private isElementVisibleInView(el: Element): boolean {
+    const win = el.ownerDocument?.defaultView;
+    if (!win) return true;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return false;
+    const cs = win.getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden';
   }
 
   private openActiveNotePicker(): void {
@@ -184,12 +205,15 @@ export default class QingShanWorkbenchPlugin extends Plugin implements SettingsH
     }
 
     const items: PickerItem[] = [];
-    const root = view.containerEl;
+    const mode = typeof view.getMode === 'function' ? view.getMode() : 'preview';
+    const root = (mode === 'source'
+      ? view.containerEl.querySelector('.markdown-source-view')
+      : view.containerEl.querySelector('.markdown-reading-view')) || view.containerEl;
 
     if (this.settings.enableMermaidWorkbench) {
       const svgs = Array.from(root.querySelectorAll<SVGSVGElement>('.mermaid svg'));
       svgs.forEach((svg, idx) => {
-        if (isProtectedMermaidElement(svg)) return;
+        if (isProtectedMermaidElement(svg) || !this.isElementVisibleInView(svg)) return;
         const firstText = (svg.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40);
         items.push({
           kind: 'mermaid',
@@ -202,7 +226,7 @@ export default class QingShanWorkbenchPlugin extends Plugin implements SettingsH
     if (this.settings.enableTableWorkbench) {
       const tables = Array.from(root.querySelectorAll<HTMLTableElement>('table'));
       tables.forEach((tbl, idx) => {
-        if (isProtectedTableElement(tbl)) return;
+        if (isProtectedTableElement(tbl) || !this.isElementVisibleInView(tbl)) return;
         const headers = Array.from(tbl.querySelectorAll('thead th, tr:first-child th'))
           .map(th => (th.textContent || '').trim())
           .filter(Boolean)
@@ -256,7 +280,7 @@ export default class QingShanWorkbenchPlugin extends Plugin implements SettingsH
 
   onunload(): void {
     this.isAlive = false;
-    for (const modal of Array.from(this.activeModals)) modal.close();
+    for (const modal of Array.from(this.activeModals.values())) modal.close();
     this.activeModals.clear();
     this.lpManager?.cleanupAll();
     this.lpManager = null;

@@ -381,9 +381,11 @@ function hasDarkShapeBackdrop(el, win) {
     if (isOpaqueDarkColor(cs.backgroundColor)) return true;
     cur = cur.parentElement;
   }
-  const group = el.closest("g.node, g.actor, g.classGroup, g.statediagram-state, g.entity, g[id]");
-  if (group && !group.matches(".edgeLabel, .edgeLabels, .edgePath, .edgePaths")) {
-    const shapes = group.querySelectorAll(":scope > rect, :scope > polygon, :scope > circle, :scope > ellipse, :scope > path, :scope > g > rect, :scope > g > polygon");
+  const group = el.closest("g.node, g.actor, g.classGroup, g.statediagram-state, g.entity, g.cluster");
+  if (group && !group.matches(".edgeLabel, .edgeLabels, .edgePath, .edgePaths, .nodes, .clusters, .root")) {
+    const shapes = group.querySelectorAll(
+      ":scope > rect, :scope > polygon, :scope > circle, :scope > ellipse, :scope > path, :scope > g.basic > rect, :scope > g.label-container > rect"
+    );
     for (const shape of Array.from(shapes)) {
       if (shape.matches(".relationshipLabelBox, .labelBkg")) continue;
       const scs = win.getComputedStyle(shape);
@@ -555,9 +557,11 @@ function inlineComputedStyles(sourceRoot, cloneRoot, win) {
     const src = srcList[i];
     const dst = dstList[i];
     if (!dst || !dst.style) continue;
+    const isDimmed = src.classList.contains("qs-wb-node-dim");
     dst.classList.remove("qs-wb-node-dim", "qs-wb-node-match", "qs-wb-node-current");
     const cs = win.getComputedStyle(src);
     for (const prop of INLINE_STYLE_PROPS) {
+      if (isDimmed && prop === "opacity") continue;
       const val = cs.getPropertyValue(prop);
       if (!val || val === "normal" || val === "auto") continue;
       if (val === "none" && !PRESERVE_NONE_PROPS.has(prop)) continue;
@@ -667,8 +671,11 @@ var import_obsidian4 = require("obsidian");
 
 // src/table/table-model.ts
 var PERCENT_RE = /^[+-]?\s*\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*%$|^[+-]?\d+(?:\.\d+)?\s*%$/;
-var NUMBER_RE = /^[+-]?\s*[¥$€£]?\s*\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*(?:万|亿|千|k|K|m|M|ms|s|px|KB|MB|GB|%)?$|^[+-]?\s*[¥$€£]?\s*\d+(?:\.\d+)?\s*(?:万|亿|千|k|K|m|M|ms|s|px|KB|MB|GB)?$/;
-var DATE_RE = /^\d{4}[-/年]\d{1,2}[-/月]\d{1,2}(?:日)?(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/;
+var UNIT_RE_PART = "(?:\u4E07|\u4EBF|\u5343|ms|MS|px|PX|KB|kb|Kb|MB|mb|Mb|GB|gb|Gb|TB|tb|Tb|B|k|K|m|M|s|%)";
+var NUMBER_RE = new RegExp(
+  `^[+-]?\\s*[\xA5$\u20AC\xA3]?\\s*\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?\\s*${UNIT_RE_PART}?$|^[+-]?\\s*[\xA5$\u20AC\xA3]?\\s*\\d+(?:\\.\\d+)?\\s*${UNIT_RE_PART}?$`
+);
+var DATE_RE = /^(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})(?:日)?(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
 var SEMVER_RE = /^v?\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?$/;
 function parseNumericValue(raw) {
   const s = raw.trim();
@@ -685,18 +692,24 @@ function parseNumericValue(raw) {
     multiplier = 1e3;
     cleaned = cleaned.slice(0, -1);
   } else if (/ms$/i.test(cleaned)) {
+    multiplier = 1e-3;
     cleaned = cleaned.slice(0, -2);
   } else if (/px$/i.test(cleaned)) {
     cleaned = cleaned.slice(0, -2);
-  } else if (/kb$/i.test(cleaned)) {
-    multiplier = 1024;
-    cleaned = cleaned.slice(0, -2);
-  } else if (/mb$/i.test(cleaned)) {
-    multiplier = 1024 * 1024;
+  } else if (/tb$/i.test(cleaned)) {
+    multiplier = 1024 * 1024 * 1024 * 1024;
     cleaned = cleaned.slice(0, -2);
   } else if (/gb$/i.test(cleaned)) {
     multiplier = 1024 * 1024 * 1024;
     cleaned = cleaned.slice(0, -2);
+  } else if (/mb$/i.test(cleaned)) {
+    multiplier = 1024 * 1024;
+    cleaned = cleaned.slice(0, -2);
+  } else if (/kb$/i.test(cleaned)) {
+    multiplier = 1024;
+    cleaned = cleaned.slice(0, -2);
+  } else if (/B$/.test(cleaned)) {
+    cleaned = cleaned.slice(0, -1);
   } else if (/[kK]$/.test(cleaned)) {
     multiplier = 1e3;
     cleaned = cleaned.slice(0, -1);
@@ -714,10 +727,23 @@ function parseNumericValue(raw) {
 }
 function parseDateTimestamp(raw) {
   const s = raw.trim();
-  if (!DATE_RE.test(s)) return null;
-  const iso = s.replace(/年|月/g, "-").replace(/日/g, "").replace(/\//g, "-").replace(" ", "T");
-  const ts = Date.parse(iso);
-  return Number.isFinite(ts) ? ts : null;
+  const m = DATE_RE.exec(s);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const hour = m[4] !== void 0 ? Number(m[4]) : 0;
+  const minute = m[5] !== void 0 ? Number(m[5]) : 0;
+  const second = m[6] !== void 0 ? Number(m[6]) : 0;
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+    return null;
+  }
+  const ts = Date.UTC(year, month - 1, day, hour, minute, second);
+  const check = new Date(ts);
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) {
+    return null;
+  }
+  return ts;
 }
 function parseSemverTuple(raw) {
   const s = raw.trim();
@@ -879,10 +905,22 @@ function enhanceInlineTable(table, child, settings, callbacks) {
   if (!shouldEnhanceTableInline(colCount, rowCount, settings.inlineMinColumns, settings.inlineMinRows)) {
     return false;
   }
-  const host = table.parentElement?.classList.contains("table-wrapper") ? table.parentElement : table.closest(".el-table") || table.parentElement;
-  if (!host) return false;
-  table.dataset.qsWbTable = "1";
+  const parent = table.parentElement;
+  if (!parent) return false;
   const doc = table.ownerDocument;
+  const dedicatedHost = parent.classList.contains("table-wrapper") ? parent : parent.classList.contains("el-table") && parent.querySelectorAll("table").length === 1 ? parent : null;
+  let host;
+  let createdWrapper = null;
+  if (dedicatedHost) {
+    host = dedicatedHost;
+  } else {
+    createdWrapper = doc.createElement("div");
+    createdWrapper.className = "qs-wb-table-wrap";
+    parent.insertBefore(createdWrapper, table);
+    createdWrapper.appendChild(table);
+    host = createdWrapper;
+  }
+  table.dataset.qsWbTable = "1";
   const bar = doc.createElement("div");
   bar.className = "qs-wb-inline-bar qs-wb-table-bar";
   const meta = doc.createElement("span");
@@ -972,6 +1010,10 @@ function enhanceInlineTable(table, child, settings, callbacks) {
     host.style.removeProperty("--qs-wb-inline-max-h");
     host.style.removeProperty("--qs-wb-bar-h");
     bar.remove();
+    if (createdWrapper && createdWrapper.parentElement) {
+      createdWrapper.parentElement.insertBefore(table, createdWrapper);
+      createdWrapper.remove();
+    }
     delete table.dataset.qsWbTable;
   });
   return true;
@@ -1199,8 +1241,9 @@ var LivePreviewTriggerManager = class {
       if (!el.isConnected) this.mounted.delete(el);
     }
   }
-  removeTriggersIn(root) {
-    for (const el of Array.from(root.querySelectorAll(`.${LP_TRIGGER_CLASS}`))) {
+  removeTriggersIn(root, kind) {
+    const selector = kind ? `.${LP_TRIGGER_CLASS}.is-${kind}` : `.${LP_TRIGGER_CLASS}`;
+    for (const el of Array.from(root.querySelectorAll(selector))) {
       const parent = el.parentElement;
       if (parent && parent.dataset.qsWbLp) delete parent.dataset.qsWbLp;
       el.remove();
@@ -1252,6 +1295,8 @@ var LivePreviewTriggerManager = class {
           if (liveSvg) this.actions.openMermaid(liveSvg, view.file?.basename || title);
         });
       }
+    } else {
+      this.removeTriggersIn(lpRoot, "mermaid");
     }
     if (settings.enableTableWorkbench) {
       const tableWidgets = lpRoot.querySelectorAll(".cm-embed-block.cm-table-widget");
@@ -1265,6 +1310,8 @@ var LivePreviewTriggerManager = class {
           }
         });
       }
+    } else {
+      this.removeTriggersIn(lpRoot, "table");
     }
   }
   mountTrigger(host, kind, onClick) {
@@ -1382,13 +1429,22 @@ function computeMinimapViewportRect(state, bounds, mapWidth, mapHeight) {
 }
 
 // src/mermaid/mermaid-search.ts
+var SPECIFIC_NODE_SELECTOR = "g.node, g.cluster, g.actor, g.classGroup, g.statediagram-state, g.entity";
+var LAYER_GROUP_SELECTOR = ".root, .nodes, .clusters, .edgePaths, .edgeLabels, .output";
 function extractDiagramSearchNodes(svg) {
   const candidates = /* @__PURE__ */ new Map();
   const labelEls = svg.querySelectorAll("text, foreignObject");
   for (const el of Array.from(labelEls)) {
     const raw = (el.textContent || "").replace(/\s+/g, " ").trim();
     if (!raw) continue;
-    const host = el.closest("g.node, g.cluster, g.actor, g.classGroup, g.statediagram-state, g[id]") || el;
+    let host = el.closest(SPECIFIC_NODE_SELECTOR);
+    if (!host) {
+      const idGroup = el.closest("g[id]");
+      if (idGroup && !idGroup.matches(LAYER_GROUP_SELECTOR) && !idGroup.querySelector(SPECIFIC_NODE_SELECTOR)) {
+        host = idGroup;
+      }
+    }
+    host = host || el;
     const existing = candidates.get(host);
     if (existing) existing.push(raw);
     else candidates.set(host, [raw]);
@@ -1417,14 +1473,29 @@ function getNodeCenterInSvg(node, svg, contentWidth, contentHeight) {
     if (typeof graphics.getBBox === "function") {
       const box = graphics.getBBox();
       if (Number.isFinite(box.width) && (box.width > 0 || box.height > 0)) {
+        let cx = box.x + box.width / 2;
+        let cy = box.y + box.height / 2;
+        const nodeCtm = typeof graphics.getCTM === "function" ? graphics.getCTM() : null;
+        const svgCtm = typeof svg.getCTM === "function" ? svg.getCTM() : null;
+        if (nodeCtm && svgCtm && typeof svg.createSVGPoint === "function") {
+          const rel = svgCtm.inverse().multiply(nodeCtm);
+          const pt = svg.createSVGPoint();
+          pt.x = cx;
+          pt.y = cy;
+          const mapped = pt.matrixTransform(rel);
+          if (Number.isFinite(mapped.x) && Number.isFinite(mapped.y)) {
+            cx = mapped.x;
+            cy = mapped.y;
+          }
+        }
         const vb = svg.viewBox?.baseVal;
         const offsetX = vb && vb.width > 0 ? vb.x : 0;
         const offsetY = vb && vb.height > 0 ? vb.y : 0;
         const scaleX = vb && vb.width > 0 ? contentWidth / vb.width : 1;
         const scaleY = vb && vb.height > 0 ? contentHeight / vb.height : 1;
         return {
-          x: (box.x + box.width / 2 - offsetX) * scaleX,
-          y: (box.y + box.height / 2 - offsetY) * scaleY
+          x: (cx - offsetX) * scaleX,
+          y: (cy - offsetY) * scaleY
         };
       }
     }
@@ -1485,6 +1556,8 @@ function createMermaidMinimap(doc, sourceSvg, onNavigate) {
   wrap.addEventListener("pointerdown", onDown);
   win.addEventListener("pointermove", onMove);
   win.addEventListener("pointerup", onUp);
+  win.addEventListener("pointercancel", onUp);
+  win.addEventListener("blur", onUp);
   return {
     element: wrap,
     sync(state, bounds) {
@@ -1503,6 +1576,8 @@ function createMermaidMinimap(doc, sourceSvg, onNavigate) {
       wrap.removeEventListener("pointerdown", onDown);
       win.removeEventListener("pointermove", onMove);
       win.removeEventListener("pointerup", onUp);
+      win.removeEventListener("pointercancel", onUp);
+      win.removeEventListener("blur", onUp);
       wrap.remove();
     }
   };
@@ -1641,10 +1716,28 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
     matchStat.textContent = `${matchIdx + 1} / ${matchedNodes.length}`;
     renderViewport();
   };
+  const DIMMED_NODE_OPACITY = "0.22";
+  const setNodeDimmed = (el, dimmed, dimOpacity = DIMMED_NODE_OPACITY) => {
+    el.classList.toggle("qs-wb-node-dim", dimmed);
+    const stylable = el;
+    if (!stylable.style) return;
+    if (dimmed) {
+      if (stylable.dataset && stylable.dataset.qsWbOrigOpacity === void 0) {
+        stylable.dataset.qsWbOrigOpacity = stylable.style.opacity || "";
+      }
+      stylable.style.setProperty("opacity", dimOpacity);
+    } else if (stylable.dataset && stylable.dataset.qsWbOrigOpacity !== void 0) {
+      const orig = stylable.dataset.qsWbOrigOpacity;
+      if (orig) stylable.style.setProperty("opacity", orig);
+      else stylable.style.removeProperty("opacity");
+      delete stylable.dataset.qsWbOrigOpacity;
+    }
+  };
   const applySearch = () => {
     const q = searchInput.value.trim();
     for (const item of indexedNodes) {
-      item.element.classList.remove("qs-wb-node-dim", "qs-wb-node-match", "qs-wb-node-current");
+      setNodeDimmed(item.element, false);
+      item.element.classList.remove("qs-wb-node-match", "qs-wb-node-current");
     }
     if (!q) {
       matchedNodes = [];
@@ -1655,8 +1748,11 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
     matchedNodes = filterDiagramNodes(indexedNodes, q);
     const matchSet = new Set(matchedNodes.map((m) => m.element));
     for (const item of indexedNodes) {
-      if (matchSet.has(item.element)) item.element.classList.add("qs-wb-node-match");
-      else item.element.classList.add("qs-wb-node-dim");
+      if (matchSet.has(item.element)) {
+        item.element.classList.add("qs-wb-node-match");
+      } else if (!matchedNodes.some((m) => item.element.contains(m.element))) {
+        setNodeDimmed(item.element, true);
+      }
     }
     if (matchedNodes.length) {
       matchIdx = 0;
@@ -1860,10 +1956,17 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
     state = clampPan(state, getBounds());
     renderViewport();
   };
+  const onBlur = () => {
+    activePointers.clear();
+    panStart = null;
+    lastPinchDist = 0;
+    stage.classList.remove("is-dragging");
+  };
   stage.addEventListener("pointerdown", onPointerDown);
   win.addEventListener("pointermove", onPointerMove);
   win.addEventListener("pointerup", onPointerUp);
   win.addEventListener("pointercancel", onPointerUp);
+  win.addEventListener("blur", onBlur);
   stage.addEventListener("wheel", onWheel, { passive: false });
   win.addEventListener("keydown", onKeyDown, true);
   win.addEventListener("resize", onResize);
@@ -1876,6 +1979,7 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
     win.removeEventListener("pointermove", onPointerMove);
     win.removeEventListener("pointerup", onPointerUp);
     win.removeEventListener("pointercancel", onPointerUp);
+    win.removeEventListener("blur", onBlur);
     stage.removeEventListener("wheel", onWheel);
     win.removeEventListener("keydown", onKeyDown, true);
     win.removeEventListener("resize", onResize);
@@ -2270,6 +2374,7 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
       resizer.addEventListener("pointerdown", (evt) => {
         evt.preventDefault();
         evt.stopPropagation();
+        resizeCleanup?.();
         const startX = evt.clientX;
         const startW = th.getBoundingClientRect().width || 120;
         const onMove = (mEvt) => {
@@ -2283,17 +2388,23 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
         const onUp = () => {
           win.removeEventListener("pointermove", onMove);
           win.removeEventListener("pointerup", onUp);
+          win.removeEventListener("pointercancel", onUp);
+          win.removeEventListener("blur", onUp);
           resizeCleanup = null;
         };
         resizeCleanup = onUp;
         win.addEventListener("pointermove", onMove);
         win.addEventListener("pointerup", onUp);
+        win.addEventListener("pointercancel", onUp);
+        win.addEventListener("blur", onUp);
       });
       th.appendChild(resizer);
       headTr.appendChild(th);
     }
     theadEl.appendChild(headTr);
     if (showColFilterRow) {
+      const measuredHeadH = Math.max(30, Math.ceil(headTr.getBoundingClientRect().height || 34));
+      tableEl.style.setProperty("--qs-wb-head-h", `${measuredHeadH}px`);
       const filterTr = doc.createElement("tr");
       filterTr.className = "qs-wb-col-filter-row";
       for (const col of activeCols) {
@@ -2528,7 +2639,7 @@ var WorkbenchItemPicker = class extends import_obsidian9.FuzzySuggestModal {
 var QingShanWorkbenchPlugin = class extends import_obsidian9.Plugin {
   settings = { ...DEFAULT_SETTINGS };
   writeQueue = Promise.resolve();
-  activeModals = /* @__PURE__ */ new Set();
+  activeModals = /* @__PURE__ */ new Map();
   trackedDocs = /* @__PURE__ */ new Set();
   lpManager = null;
   isAlive = true;
@@ -2617,23 +2728,42 @@ var QingShanWorkbenchPlugin = class extends import_obsidian9.Plugin {
     });
     for (const doc of docs) this.applyBodyClassesToDoc(doc);
   }
+  closeActiveModalInDoc(doc) {
+    const existing = this.activeModals.get(doc);
+    if (existing) {
+      this.activeModals.delete(doc);
+      existing.close();
+    }
+  }
   launchMermaid(svg, title) {
+    const doc = svg.ownerDocument;
+    this.closeActiveModalInDoc(doc);
     const handle = openMermaidLightbox(svg, this.settings, title, () => {
-      this.activeModals.delete(handle);
+      if (this.activeModals.get(doc) === handle) this.activeModals.delete(doc);
     });
-    this.activeModals.add(handle);
+    this.activeModals.set(doc, handle);
   }
   launchTable(table, title, sourcePath) {
+    const doc = table.ownerDocument;
+    this.closeActiveModalInDoc(doc);
     const handle = openTableWorkbench(table, this.settings, {
       title,
       onClose: () => {
-        this.activeModals.delete(handle);
+        if (this.activeModals.get(doc) === handle) this.activeModals.delete(doc);
       },
       onOpenInternalLink: (href) => {
         void this.app.workspace.openLinkText(href, sourcePath);
       }
     });
-    this.activeModals.add(handle);
+    this.activeModals.set(doc, handle);
+  }
+  isElementVisibleInView(el) {
+    const win = el.ownerDocument?.defaultView;
+    if (!win) return true;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) return false;
+    const cs = win.getComputedStyle(el);
+    return cs.display !== "none" && cs.visibility !== "hidden";
   }
   openActiveNotePicker() {
     const view = this.app.workspace.getActiveViewOfType(import_obsidian9.MarkdownView);
@@ -2646,11 +2776,12 @@ var QingShanWorkbenchPlugin = class extends import_obsidian9.Plugin {
       return;
     }
     const items = [];
-    const root = view.containerEl;
+    const mode = typeof view.getMode === "function" ? view.getMode() : "preview";
+    const root = (mode === "source" ? view.containerEl.querySelector(".markdown-source-view") : view.containerEl.querySelector(".markdown-reading-view")) || view.containerEl;
     if (this.settings.enableMermaidWorkbench) {
       const svgs = Array.from(root.querySelectorAll(".mermaid svg"));
       svgs.forEach((svg, idx) => {
-        if (isProtectedMermaidElement(svg)) return;
+        if (isProtectedMermaidElement(svg) || !this.isElementVisibleInView(svg)) return;
         const firstText = (svg.textContent || "").replace(/\s+/g, " ").trim().slice(0, 40);
         items.push({
           kind: "mermaid",
@@ -2662,7 +2793,7 @@ var QingShanWorkbenchPlugin = class extends import_obsidian9.Plugin {
     if (this.settings.enableTableWorkbench) {
       const tables = Array.from(root.querySelectorAll("table"));
       tables.forEach((tbl, idx) => {
-        if (isProtectedTableElement(tbl)) return;
+        if (isProtectedTableElement(tbl) || !this.isElementVisibleInView(tbl)) return;
         const headers = Array.from(tbl.querySelectorAll("thead th, tr:first-child th")).map((th) => (th.textContent || "").trim()).filter(Boolean).slice(0, 4).join(" / ");
         const rows = tbl.querySelectorAll("tbody tr").length;
         items.push({
@@ -2704,7 +2835,7 @@ var QingShanWorkbenchPlugin = class extends import_obsidian9.Plugin {
   }
   onunload() {
     this.isAlive = false;
-    for (const modal of Array.from(this.activeModals)) modal.close();
+    for (const modal of Array.from(this.activeModals.values())) modal.close();
     this.activeModals.clear();
     this.lpManager?.cleanupAll();
     this.lpManager = null;

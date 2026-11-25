@@ -63,6 +63,8 @@ export function createMermaidMinimap(
   wrap.addEventListener('pointerdown', onDown);
   win.addEventListener('pointermove', onMove);
   win.addEventListener('pointerup', onUp);
+  win.addEventListener('pointercancel', onUp);
+  win.addEventListener('blur', onUp);
 
   return {
     element: wrap,
@@ -82,6 +84,8 @@ export function createMermaidMinimap(
       wrap.removeEventListener('pointerdown', onDown);
       win.removeEventListener('pointermove', onMove);
       win.removeEventListener('pointerup', onUp);
+      win.removeEventListener('pointercancel', onUp);
+      win.removeEventListener('blur', onUp);
       wrap.remove();
     },
   };

@@ -29,16 +29,23 @@ async function buildBrowserHarness() {
       contents: `
         import { openMermaidLightbox } from './src/mermaid/mermaid-modal';
         import { buildStandaloneSvgString, renderSvgToPngBlob } from './src/mermaid/mermaid-export';
+        import { getNodeCenterInSvg } from './src/mermaid/mermaid-search';
         import { openTableWorkbench } from './src/table/table-modal';
         import { enhanceInlineTable } from './src/table/table-inline';
+        import { LivePreviewTriggerManager } from './src/detectors/editor-detector';
         import { DEFAULT_SETTINGS } from './src/settings';
         import { isProtectedTableElement, isPathExcluded } from './src/guard';
+        import { MarkdownRenderChild, MarkdownView } from 'obsidian';
         window.__WB__ = {
           openMermaidLightbox,
           buildStandaloneSvgString,
           renderSvgToPngBlob,
+          getNodeCenterInSvg,
           openTableWorkbench,
           enhanceInlineTable,
+          LivePreviewTriggerManager,
+          MarkdownRenderChild,
+          MarkdownView,
           DEFAULT_SETTINGS,
           isProtectedTableElement,
           isPathExcluded,
@@ -64,6 +71,7 @@ async function buildBrowserHarness() {
             export class Plugin {}
             export class PluginSettingTab {}
             export class Setting {}
+            export class MarkdownView {}
             export class MarkdownRenderChild {
               constructor(el) { this.containerEl = el; this._cbs = []; }
               register(cb) { this._cbs.push(cb); }
@@ -317,6 +325,282 @@ test('Chromium E2E: 2000x13 virtualized table, sorting, drawer links, multiline 
     assert.equal(metrics.openedLink, 'Docs/Architecture');
     assert.equal(metrics.modalClosedAfterLink, true);
     assert.equal(metrics.multilineText, 'Line 1\nLine 2');
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Chromium E2E: P0/P1 regressions (transform search center, inline opacity dim, cluster non-dim, g#root bare text, callout wrap/print, LP toggle, blur cleanup)', async t => {
+  const chromium = resolveChromium();
+  if (!chromium) {
+    t.skip('Playwright not available (set PLAYWRIGHT_MODULE to run browser tests)');
+    return;
+  }
+  const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+  const harness = await buildBrowserHarness();
+
+  const browser = await chromium.launch({
+    headless: true,
+    ...(CHROME_PATH && fs.existsSync(CHROME_PATH) ? { executablePath: CHROME_PATH } : {}),
+  });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.setContent(`
+      <style>
+        body { margin: 0; --background-primary: #1e242c; --background-secondary: #181e25; --text-normal: #c4cedb; --text-muted: #8b9bb0; --background-modifier-border: #323d4c; --interactive-accent: #4870ac; }
+      </style>
+      <style>${css}</style>
+      <body class="theme-dark">
+        <div class="mermaid">
+          <svg id="mermaid-v11" viewBox="0 0 1000 500" width="1000" height="500" xmlns="http://www.w3.org/2000/svg">
+            <style>
+              #mermaid-v11 .node { opacity: 1; }
+              #mermaid-v11 .node rect { fill: #252d38; stroke: #4870ac; }
+              #mermaid-v11 .node text { fill: #dbe7f6; }
+              #mermaid-v11 .cluster rect { fill: #202833; stroke: #4870ac; }
+              #mermaid-v11 .cluster-label text { fill: #dbe7f6; }
+              #mermaid-v11 .bare-caption { fill: #e2e8f0; }
+            </style>
+            <g class="root" id="root">
+              <text id="root-bare" class="bare-caption" x="500" y="30">Canvas Caption</text>
+              <g class="clusters">
+                <g class="cluster" id="sub0">
+                  <rect x="360" y="150" width="200" height="140"/>
+                  <g class="cluster-label"><text x="460" y="175">Billing Domain</text></g>
+                  <g class="node" id="n-child" transform="translate(460, 230)" style="opacity: 1;">
+                    <rect x="-70" y="-22" width="140" height="44"/>
+                    <text x="0" y="4" text-anchor="middle">Inner Child</text>
+                  </g>
+                </g>
+              </g>
+              <g class="nodes">
+                <g class="node" id="flowchart-Local-0" transform="translate(120, 90)" style="opacity: 1;">
+                  <rect x="-70" y="-25" width="140" height="50"/>
+                  <text x="0" y="5" text-anchor="middle">Local Entry</text>
+                </g>
+                <g class="node" id="flowchart-Remote-1" transform="translate(840, 420)" style="opacity: 1;">
+                  <rect x="-90" y="-25" width="180" height="50"/>
+                  <text x="0" y="5" text-anchor="middle">Remote Ledger</text>
+                </g>
+              </g>
+            </g>
+          </svg>
+        </div>
+
+        <div class="markdown-preview-view">
+          <div class="markdown-preview-section">
+            <div class="callout-content" id="callout-box">
+              <p id="sib-p1">Intro paragraph</p>
+              <table id="bare-tbl">
+                <thead><tr><th>Col1</th><th>Col2</th><th>Col3</th><th>Col4</th><th>Col5</th></tr></thead>
+                <tbody>
+                  <tr><td>A1</td><td>B1</td><td>C1</td><td>D1</td><td>E1</td></tr>
+                  <tr><td>A2</td><td>B2</td><td>C2</td><td>D2</td><td>E2</td></tr>
+                  <tr><td>A3</td><td>B3</td><td>C3</td><td>D3</td><td>E3</td></tr>
+                  <tr><td>A4</td><td>B4</td><td>C4</td><td>D4</td><td>E4</td></tr>
+                  <tr><td>A5</td><td>B5</td><td>C5</td><td>D5</td><td>E5</td></tr>
+                  <tr><td>A6</td><td>B6</td><td>C6</td><td>D6</td><td>E6</td></tr>
+                  <tr><td>A7</td><td>B7</td><td>C7</td><td>D7</td><td>E7</td></tr>
+                  <tr><td>A8</td><td>B8</td><td>C8</td><td>D8</td><td>E8</td></tr>
+                </tbody>
+              </table>
+              <p id="sib-p2">Outro paragraph</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="lp-container">
+          <div id="lp-view" class="markdown-source-view mod-cm6 is-live-preview">
+            <div class="cm-embed-block" id="lp-m-block">
+              <div class="mermaid"><svg id="lp-svg" viewBox="0 0 100 50" width="100" height="50"><rect width="100" height="50"/></svg></div>
+            </div>
+            <div class="cm-embed-block cm-table-widget" id="lp-t-block">
+              <table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>
+            </div>
+          </div>
+        </div>
+      </body>
+    `);
+    await page.addScriptTag({ content: harness });
+
+    const res = await page.evaluate(async () => {
+      const svg = document.getElementById('mermaid-v11');
+      const remoteOrig = document.getElementById('flowchart-Remote-1');
+      const rawCenter = window.__WB__.getNodeCenterInSvg(remoteOrig, svg, 1000, 500);
+
+      // P0 #1 + P1 #2 + P1 #9: Open lightbox, search translated node & nested cluster child
+      const handle = window.__WB__.openMermaidLightbox(svg, window.__WB__.DEFAULT_SETTINGS, 'V11Diagram');
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+      const overlay = document.querySelector('.qs-wb-mermaid-overlay');
+      const stage = overlay.querySelector('.qs-wb-mermaid-stage');
+      const searchInput = overlay.querySelector('.qs-wb-input');
+
+      searchInput.value = 'Remote Ledger';
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 220));
+      const liveRemote = overlay.querySelector('[id^="flowchart-Remote-1"]');
+      const liveLocal = overlay.querySelector('[id^="flowchart-Local-0"]');
+      const liveRoot = overlay.querySelector('[id^="root-qs-live"]');
+      const remoteRect = liveRemote.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
+      const remoteCenteredDx = Math.abs((remoteRect.left + remoteRect.width / 2) - (stageRect.left + stageRect.width / 2));
+      const remoteCenteredDy = Math.abs((remoteRect.top + remoteRect.height / 2) - (stageRect.top + stageRect.height / 2));
+      const localDimmedOpacity = parseFloat(getComputedStyle(liveLocal).opacity);
+      const rootWasDimmed = liveRoot.classList.contains('qs-wb-node-dim');
+
+      // Search nested cluster child: ancestor cluster must NOT be dimmed
+      searchInput.value = 'Inner Child';
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+      const liveSub0 = overlay.querySelector('[id^="sub0"]');
+      const liveChild = overlay.querySelector('[id^="n-child"]');
+      const childMatched = liveChild.classList.contains('qs-wb-node-match');
+      const parentClusterDimmed = liveSub0.classList.contains('qs-wb-node-dim');
+
+      // Clear search: inline opacity must restore to '1'
+      searchInput.value = '';
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 220));
+      const localRestoredInlineOpacity = liveLocal.style.opacity;
+      const localRestoredComputedOpacity = parseFloat(getComputedStyle(liveLocal).opacity);
+      handle.close();
+
+      // P1 #3: Bare text inside g#root converts to dark ink on white export despite sibling dark node rects
+      const { svgString } = window.__WB__.buildStandaloneSvgString(svg, 'white');
+      const bareTextTurnedDark = /id="root-bare"[^>]*style="[^"]*fill:\s*(?:rgb\(30,\s*41,\s*59\)|#1e293b)/.test(svgString);
+
+      // P1 #7 + P1 #10: Bare table inside callout wraps ONLY table, prints unclipped, unwraps cleanly
+      const bareTbl = document.getElementById('bare-tbl');
+      const calloutBox = document.getElementById('callout-box');
+      const child = new window.__WB__.MarkdownRenderChild(calloutBox);
+      const enhanced = window.__WB__.enhanceInlineTable(bareTbl, child, window.__WB__.DEFAULT_SETTINGS, {
+        onOpenModal: () => {},
+        onCopyTsv: () => {},
+      });
+      const wrap = bareTbl.parentElement;
+      const wrapIsolated = wrap.classList.contains('qs-wb-table-wrap')
+        && !wrap.contains(document.getElementById('sib-p1'))
+        && !wrap.contains(document.getElementById('sib-p2'));
+      const freezeBtn = wrap.querySelectorAll('.qs-wb-inline-btn')[0];
+      freezeBtn.click();
+      const calloutFrozen = calloutBox.classList.contains('qs-wb-table-frozen');
+      const wrapFrozen = wrap.classList.contains('qs-wb-table-frozen');
+
+      // Print mode check (body.print): bar hidden + frozen table unclipped
+      document.body.classList.add('print');
+      const bar = wrap.querySelector('.qs-wb-table-bar');
+      const printBarDisplay = getComputedStyle(bar).display;
+      const printWrapMaxH = getComputedStyle(wrap).maxHeight;
+      const printWrapOverflowY = getComputedStyle(wrap).overflowY;
+      document.body.classList.remove('print');
+
+      child.unload();
+      const unwrappedCleanly = bareTbl.parentElement === calloutBox
+        && !calloutBox.querySelector('.qs-wb-table-wrap')
+        && !calloutBox.querySelector('.qs-wb-table-bar');
+
+      // P1 #4: LivePreviewTriggerManager selective toggle off
+      const liveSettings = { ...window.__WB__.DEFAULT_SETTINGS };
+      const lpContainer = document.getElementById('lp-container');
+      const lpViewEl = document.getElementById('lp-view');
+      const fakeView = new window.__WB__.MarkdownView();
+      fakeView.containerEl = lpContainer;
+      fakeView.file = { path: 'Demo.md', basename: 'Demo' };
+      const fakeApp = {
+        workspace: {
+          iterateAllLeaves: cb => { cb({ view: fakeView }); },
+        },
+      };
+      const lpMgr = new window.__WB__.LivePreviewTriggerManager(fakeApp, {
+        getSettings: () => liveSettings,
+        openMermaid: () => {},
+        openTable: () => {},
+      });
+      lpMgr.refreshAll();
+      const lpBothM = lpViewEl.querySelectorAll('.qs-wb-lp-trigger.is-mermaid').length;
+      const lpBothT = lpViewEl.querySelectorAll('.qs-wb-lp-trigger.is-table').length;
+
+      liveSettings.enableMermaidWorkbench = false;
+      lpMgr.refreshAll();
+      const lpOnlyTM = lpViewEl.querySelectorAll('.qs-wb-lp-trigger.is-mermaid').length;
+      const lpOnlyTT = lpViewEl.querySelectorAll('.qs-wb-lp-trigger.is-table').length;
+
+      liveSettings.enableTableWorkbench = false;
+      lpMgr.refreshAll();
+      const lpNoneT = lpViewEl.querySelectorAll('.qs-wb-lp-trigger').length;
+      lpMgr.cleanupAll();
+
+      // P1 #8: Dynamic --qs-wb-head-h on column filter row + blur cleanup on column resize
+      const tblHandle = window.__WB__.openTableWorkbench(bareTbl, window.__WB__.DEFAULT_SETTINGS, { title: 'ResizeTest' });
+      const tblOverlay = document.querySelector('.qs-wb-table-overlay');
+      const filterBtn = [...tblOverlay.querySelectorAll('.qs-wb-btn')].find(b => b.textContent.includes('列筛选'));
+      filterBtn.click();
+      const gridTable = tblOverlay.querySelector('.qs-wb-grid-table');
+      const headHVar = gridTable.style.getPropertyValue('--qs-wb-head-h');
+      const firstTh = tblOverlay.querySelector('thead th.qs-wb-th');
+      const resizer = firstTh.querySelector('.qs-wb-col-resizer');
+      resizer.dispatchEvent(new PointerEvent('pointerdown', { clientX: 100, bubbles: true }));
+      window.dispatchEvent(new Event('blur'));
+      const widthAfterBlur = firstTh.style.width;
+      window.dispatchEvent(new PointerEvent('pointermove', { clientX: 400, bubbles: true }));
+      const widthAfterPostBlurMove = firstTh.style.width;
+      tblHandle.close();
+
+      return {
+        rawCenter,
+        remoteCenteredDx,
+        remoteCenteredDy,
+        localDimmedOpacity,
+        rootWasDimmed,
+        childMatched,
+        parentClusterDimmed,
+        localRestoredInlineOpacity,
+        localRestoredComputedOpacity,
+        bareTextTurnedDark,
+        enhanced,
+        wrapIsolated,
+        calloutFrozen,
+        wrapFrozen,
+        printBarDisplay,
+        printWrapMaxH,
+        printWrapOverflowY,
+        unwrappedCleanly,
+        lpBothM,
+        lpBothT,
+        lpOnlyTM,
+        lpOnlyTT,
+        lpNoneT,
+        headHVar,
+        blurStoppedResize: widthAfterBlur === widthAfterPostBlurMove,
+      };
+    });
+
+    assert.ok(Math.abs(res.rawCenter.x - 840) < 2, `Expected center x ~840, got ${res.rawCenter.x}`);
+    assert.ok(Math.abs(res.rawCenter.y - 420) < 2, `Expected center y ~420, got ${res.rawCenter.y}`);
+    assert.ok(res.remoteCenteredDx < 15, `Expected remote node centered horizontally, dx=${res.remoteCenteredDx}`);
+    assert.ok(res.remoteCenteredDy < 15, `Expected remote node centered vertically, dy=${res.remoteCenteredDy}`);
+    assert.ok(res.localDimmedOpacity < 0.3, `Expected dimmed opacity ~0.22 despite inline opacity:1, got ${res.localDimmedOpacity}`);
+    assert.equal(res.rootWasDimmed, false);
+    assert.equal(res.childMatched, true);
+    assert.equal(res.parentClusterDimmed, false);
+    assert.equal(res.localRestoredInlineOpacity, '1');
+    assert.equal(res.localRestoredComputedOpacity, 1);
+    assert.equal(res.bareTextTurnedDark, true);
+    assert.equal(res.enhanced, true);
+    assert.equal(res.wrapIsolated, true);
+    assert.equal(res.calloutFrozen, false);
+    assert.equal(res.wrapFrozen, true);
+    assert.equal(res.printBarDisplay, 'none');
+    assert.equal(res.printWrapMaxH, 'none');
+    assert.equal(res.printWrapOverflowY, 'visible');
+    assert.equal(res.unwrappedCleanly, true);
+    assert.equal(res.lpBothM, 1);
+    assert.equal(res.lpBothT, 1);
+    assert.equal(res.lpOnlyTM, 0);
+    assert.equal(res.lpOnlyTT, 1);
+    assert.equal(res.lpNoneT, 0);
+    assert.match(res.headHVar, /^\d+px$/);
+    assert.equal(res.blurStoppedResize, true);
   } finally {
     await browser.close();
   }

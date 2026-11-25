@@ -170,10 +170,13 @@ function hasDarkShapeBackdrop(el: Element, win: Window): boolean {
     cur = cur.parentElement;
   }
 
-  // Check nearest SVG node/actor/cluster container for a dark-filled shape sibling
-  const group = el.closest('g.node, g.actor, g.classGroup, g.statediagram-state, g.entity, g[id]');
-  if (group && !group.matches('.edgeLabel, .edgeLabels, .edgePath, .edgePaths')) {
-    const shapes = group.querySelectorAll(':scope > rect, :scope > polygon, :scope > circle, :scope > ellipse, :scope > path, :scope > g > rect, :scope > g > polygon');
+  // Check nearest single-node SVG container (never match outer layer groups like g.nodes / g.root
+  // whose descendant node rects would cause false positives on bare canvas text).
+  const group = el.closest('g.node, g.actor, g.classGroup, g.statediagram-state, g.entity, g.cluster');
+  if (group && !group.matches('.edgeLabel, .edgeLabels, .edgePath, .edgePaths, .nodes, .clusters, .root')) {
+    const shapes = group.querySelectorAll(
+      ':scope > rect, :scope > polygon, :scope > circle, :scope > ellipse, :scope > path, :scope > g.basic > rect, :scope > g.label-container > rect',
+    );
     for (const shape of Array.from(shapes)) {
       if (shape.matches('.relationshipLabelBox, .labelBkg')) continue;
       const scs = win.getComputedStyle(shape);
@@ -385,9 +388,11 @@ function inlineComputedStyles(sourceRoot: Element, cloneRoot: Element, win: Wind
     const src = srcList[i];
     const dst = dstList[i] as HTMLElement | SVGElement;
     if (!dst || !dst.style) continue;
+    const isDimmed = src.classList.contains('qs-wb-node-dim');
     dst.classList.remove('qs-wb-node-dim', 'qs-wb-node-match', 'qs-wb-node-current');
     const cs = win.getComputedStyle(src);
     for (const prop of INLINE_STYLE_PROPS) {
+      if (isDimmed && prop === 'opacity') continue;
       const val = cs.getPropertyValue(prop);
       if (!val || val === 'normal' || val === 'auto') continue;
       if (val === 'none' && !PRESERVE_NONE_PROPS.has(prop)) continue;

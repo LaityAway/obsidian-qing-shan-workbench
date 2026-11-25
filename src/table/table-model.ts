@@ -30,8 +30,11 @@ export interface TableGrid {
 }
 
 const PERCENT_RE = /^[+-]?\s*\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*%$|^[+-]?\d+(?:\.\d+)?\s*%$/;
-const NUMBER_RE = /^[+-]?\s*[¥$€£]?\s*\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*(?:万|亿|千|k|K|m|M|ms|s|px|KB|MB|GB|%)?$|^[+-]?\s*[¥$€£]?\s*\d+(?:\.\d+)?\s*(?:万|亿|千|k|K|m|M|ms|s|px|KB|MB|GB)?$/;
-const DATE_RE = /^\d{4}[-/年]\d{1,2}[-/月]\d{1,2}(?:日)?(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/;
+const UNIT_RE_PART = '(?:万|亿|千|ms|MS|px|PX|KB|kb|Kb|MB|mb|Mb|GB|gb|Gb|TB|tb|Tb|B|k|K|m|M|s|%)';
+const NUMBER_RE = new RegExp(
+  `^[+-]?\\s*[¥$€£]?\\s*\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?\\s*${UNIT_RE_PART}?$|^[+-]?\\s*[¥$€£]?\\s*\\d+(?:\\.\\d+)?\\s*${UNIT_RE_PART}?$`,
+);
+const DATE_RE = /^(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})(?:日)?(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/;
 const SEMVER_RE = /^v?\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?$/;
 
 export function parseNumericValue(raw: string): number | null {
@@ -42,11 +45,13 @@ export function parseNumericValue(raw: string): number | null {
   if (cleaned.endsWith('亿')) { multiplier = 1e8; cleaned = cleaned.slice(0, -1); }
   else if (cleaned.endsWith('万')) { multiplier = 1e4; cleaned = cleaned.slice(0, -1); }
   else if (cleaned.endsWith('千')) { multiplier = 1e3; cleaned = cleaned.slice(0, -1); }
-  else if (/ms$/i.test(cleaned)) { cleaned = cleaned.slice(0, -2); }
+  else if (/ms$/i.test(cleaned)) { multiplier = 1e-3; cleaned = cleaned.slice(0, -2); }
   else if (/px$/i.test(cleaned)) { cleaned = cleaned.slice(0, -2); }
-  else if (/kb$/i.test(cleaned)) { multiplier = 1024; cleaned = cleaned.slice(0, -2); }
-  else if (/mb$/i.test(cleaned)) { multiplier = 1024 * 1024; cleaned = cleaned.slice(0, -2); }
+  else if (/tb$/i.test(cleaned)) { multiplier = 1024 * 1024 * 1024 * 1024; cleaned = cleaned.slice(0, -2); }
   else if (/gb$/i.test(cleaned)) { multiplier = 1024 * 1024 * 1024; cleaned = cleaned.slice(0, -2); }
+  else if (/mb$/i.test(cleaned)) { multiplier = 1024 * 1024; cleaned = cleaned.slice(0, -2); }
+  else if (/kb$/i.test(cleaned)) { multiplier = 1024; cleaned = cleaned.slice(0, -2); }
+  else if (/B$/.test(cleaned)) { cleaned = cleaned.slice(0, -1); }
   else if (/[kK]$/.test(cleaned)) { multiplier = 1e3; cleaned = cleaned.slice(0, -1); }
   else if (/[mM]$/.test(cleaned)) { multiplier = 1e6; cleaned = cleaned.slice(0, -1); }
   else if (cleaned.endsWith('%')) { cleaned = cleaned.slice(0, -1); }
@@ -58,14 +63,23 @@ export function parseNumericValue(raw: string): number | null {
 
 export function parseDateTimestamp(raw: string): number | null {
   const s = raw.trim();
-  if (!DATE_RE.test(s)) return null;
-  const iso = s
-    .replace(/年|月/g, '-')
-    .replace(/日/g, '')
-    .replace(/\//g, '-')
-    .replace(' ', 'T');
-  const ts = Date.parse(iso);
-  return Number.isFinite(ts) ? ts : null;
+  const m = DATE_RE.exec(s);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  const hour = m[4] !== undefined ? Number(m[4]) : 0;
+  const minute = m[5] !== undefined ? Number(m[5]) : 0;
+  const second = m[6] !== undefined ? Number(m[6]) : 0;
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+    return null;
+  }
+  const ts = Date.UTC(year, month - 1, day, hour, minute, second);
+  const check = new Date(ts);
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) {
+    return null;
+  }
+  return ts;
 }
 
 export function parseSemverTuple(raw: string): number[] | null {

@@ -66,8 +66,9 @@ export class LivePreviewTriggerManager {
     }
   }
 
-  private removeTriggersIn(root: HTMLElement): void {
-    for (const el of Array.from(root.querySelectorAll<HTMLElement>(`.${LP_TRIGGER_CLASS}`))) {
+  private removeTriggersIn(root: HTMLElement, kind?: 'mermaid' | 'table'): void {
+    const selector = kind ? `.${LP_TRIGGER_CLASS}.is-${kind}` : `.${LP_TRIGGER_CLASS}`;
+    for (const el of Array.from(root.querySelectorAll<HTMLElement>(selector))) {
       const parent = el.parentElement;
       if (parent && parent.dataset.qsWbLp) delete parent.dataset.qsWbLp;
       el.remove();
@@ -123,6 +124,8 @@ export class LivePreviewTriggerManager {
           if (liveSvg) this.actions.openMermaid(liveSvg, view.file?.basename || title);
         });
       }
+    } else {
+      this.removeTriggersIn(lpRoot, 'mermaid');
     }
 
     if (settings.enableTableWorkbench) {
@@ -137,6 +140,8 @@ export class LivePreviewTriggerManager {
           }
         });
       }
+    } else {
+      this.removeTriggersIn(lpRoot, 'table');
     }
   }
 

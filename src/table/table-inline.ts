@@ -28,13 +28,28 @@ export function enhanceInlineTable(
     return false;
   }
 
-  const host = table.parentElement?.classList.contains('table-wrapper')
-    ? table.parentElement
-    : table.closest<HTMLElement>('.el-table') || table.parentElement;
-  if (!host) return false;
+  const parent = table.parentElement;
+  if (!parent) return false;
+
+  const doc = table.ownerDocument;
+  const dedicatedHost = parent.classList.contains('table-wrapper')
+    ? parent
+    : (parent.classList.contains('el-table') && parent.querySelectorAll('table').length === 1 ? parent : null);
+
+  let host: HTMLElement;
+  let createdWrapper: HTMLDivElement | null = null;
+  if (dedicatedHost) {
+    host = dedicatedHost;
+  } else {
+    // Isolate bare / callout HTML tables so freezing or toolbar insertion never affects sibling paragraphs.
+    createdWrapper = doc.createElement('div');
+    createdWrapper.className = 'qs-wb-table-wrap';
+    parent.insertBefore(createdWrapper, table);
+    createdWrapper.appendChild(table);
+    host = createdWrapper;
+  }
 
   table.dataset.qsWbTable = '1';
-  const doc = table.ownerDocument;
 
   const bar = doc.createElement('div');
   bar.className = 'qs-wb-inline-bar qs-wb-table-bar';
@@ -134,6 +149,10 @@ export function enhanceInlineTable(
     host.style.removeProperty('--qs-wb-inline-max-h');
     host.style.removeProperty('--qs-wb-bar-h');
     bar.remove();
+    if (createdWrapper && createdWrapper.parentElement) {
+      createdWrapper.parentElement.insertBefore(table, createdWrapper);
+      createdWrapper.remove();
+    }
     delete table.dataset.qsWbTable;
   });
   return true;

@@ -1,7 +1,7 @@
 {
   "id": "qing-shan-workbench",
   "name": "Qing Shan Workbench",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "minAppVersion": "1.8.7",
   "description": "Interactive Mermaid diagram lightbox (GPU zoom, minimap, node search, styled SVG/PNG export) and virtualized wide-table workbench (freeze, filter, sort, row detail drawer, TSV/CSV/Markdown copy).",
   "author": "青山",

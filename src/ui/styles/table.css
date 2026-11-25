@@ -1,5 +1,10 @@
 /* Inline Table Bar, Sticky Freeze Mode & Fullscreen Virtualized Table Workbench */
 
+.qs-wb-table-wrap {
+  position: relative;
+  overflow-x: auto;
+}
+
 .qs-wb-table-host {
   position: relative;
 }
@@ -42,10 +47,13 @@
   display: none;
 }
 
+.markdown-preview-view .markdown-preview-section .qs-wb-table-host.qs-wb-table-frozen,
 .markdown-preview-view .qs-wb-table-host.qs-wb-table-frozen,
 .qs-wb-table-host.qs-wb-table-frozen {
   max-height: var(--qs-wb-inline-max-h, 560px);
   overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   border: 1px solid var(--qs-border, var(--background-modifier-border));
   border-radius: 6px;
   padding: 0 6px 6px;
@@ -184,7 +192,7 @@
 
 .qs-wb-col-filter-row th {
   position: sticky;
-  top: 34px;
+  top: var(--qs-wb-head-h, 34px);
   z-index: 4;
   background: var(--qs-wb-paper);
   padding: 4px 6px;

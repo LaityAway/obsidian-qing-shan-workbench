@@ -189,20 +189,64 @@ body.qs-wb-table-off .qs-wb-table-host > .qs-wb-inline-bar.qs-wb-table-bar {
 
 @media print {
   body .qs-wb-overlay,
-  body .qs-wb-mermaid-host > .qs-wb-float-bar,
-  body .qs-wb-table-host > .qs-wb-inline-bar,
+  body .qs-wb-mermaid-host > .qs-wb-float-bar.qs-wb-mermaid-bar,
+  body .qs-wb-table-host > .qs-wb-inline-bar.qs-wb-table-bar,
+  body .qs-wb-table-host.qs-wb-table-frozen > .qs-wb-inline-bar.qs-wb-table-bar,
   body .cm-embed-block > .qs-wb-lp-trigger {
     display: none;
   }
+
+  body .markdown-preview-view .markdown-preview-section .qs-wb-table-host.qs-wb-table-frozen,
+  body .markdown-preview-view .qs-wb-table-host.qs-wb-table-frozen,
+  body .qs-wb-table-host.qs-wb-table-frozen {
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    padding: 0;
+  }
+
+  body .qs-wb-table-host.qs-wb-table-frozen table thead th,
+  body .qs-wb-table-host.qs-wb-table-frozen table th:first-child,
+  body .qs-wb-table-host.qs-wb-table-frozen table td:first-child {
+    position: static;
+  }
 }
 
+body.print .qs-wb-overlay,
+body.print .qs-wb-mermaid-host > .qs-wb-float-bar.qs-wb-mermaid-bar,
+body.print .qs-wb-table-host > .qs-wb-inline-bar.qs-wb-table-bar,
+body.print .qs-wb-table-host.qs-wb-table-frozen > .qs-wb-inline-bar.qs-wb-table-bar,
+body.print .cm-embed-block > .qs-wb-lp-trigger,
 body .print .qs-wb-overlay,
-body .print .qs-wb-mermaid-host > .qs-wb-float-bar,
-body .print .qs-wb-table-host > .qs-wb-inline-bar,
+body .print .qs-wb-mermaid-host > .qs-wb-float-bar.qs-wb-mermaid-bar,
+body .print .qs-wb-table-host > .qs-wb-inline-bar.qs-wb-table-bar,
+body .print .qs-wb-table-host.qs-wb-table-frozen > .qs-wb-inline-bar.qs-wb-table-bar,
 body .print .cm-embed-block > .qs-wb-lp-trigger,
 .print .qs-wb-overlay,
 .print .qs-wb-float-bar,
 .print .qs-wb-inline-bar,
 .print .qs-wb-lp-trigger {
   display: none;
+}
+
+body.print .markdown-preview-view .markdown-preview-section .qs-wb-table-host.qs-wb-table-frozen,
+body.print .markdown-preview-view .qs-wb-table-host.qs-wb-table-frozen,
+body.print .qs-wb-table-host.qs-wb-table-frozen,
+body .print .markdown-preview-view .markdown-preview-section .qs-wb-table-host.qs-wb-table-frozen,
+body .print .markdown-preview-view .qs-wb-table-host.qs-wb-table-frozen,
+body .print .qs-wb-table-host.qs-wb-table-frozen,
+.print .qs-wb-table-host.qs-wb-table-frozen {
+  max-height: none;
+  overflow: visible;
+  border: 0;
+  padding: 0;
+}
+
+body.print .qs-wb-table-host.qs-wb-table-frozen table thead th,
+body.print .qs-wb-table-host.qs-wb-table-frozen table th:first-child,
+body.print .qs-wb-table-host.qs-wb-table-frozen table td:first-child,
+body .print .qs-wb-table-host.qs-wb-table-frozen table thead th,
+body .print .qs-wb-table-host.qs-wb-table-frozen table th:first-child,
+body .print .qs-wb-table-host.qs-wb-table-frozen table td:first-child {
+  position: static;
 }

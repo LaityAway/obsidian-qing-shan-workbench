@@ -344,6 +344,7 @@ export function openTableWorkbench(
       resizer.addEventListener('pointerdown', evt => {
         evt.preventDefault();
         evt.stopPropagation();
+        resizeCleanup?.();
         const startX = evt.clientX;
         const startW = th.getBoundingClientRect().width || 120;
         const onMove = (mEvt: PointerEvent): void => {
@@ -357,11 +358,15 @@ export function openTableWorkbench(
         const onUp = (): void => {
           win.removeEventListener('pointermove', onMove);
           win.removeEventListener('pointerup', onUp);
+          win.removeEventListener('pointercancel', onUp);
+          win.removeEventListener('blur', onUp);
           resizeCleanup = null;
         };
         resizeCleanup = onUp;
         win.addEventListener('pointermove', onMove);
         win.addEventListener('pointerup', onUp);
+        win.addEventListener('pointercancel', onUp);
+        win.addEventListener('blur', onUp);
       });
       th.appendChild(resizer);
       headTr.appendChild(th);
@@ -369,6 +374,8 @@ export function openTableWorkbench(
     theadEl.appendChild(headTr);
 
     if (showColFilterRow) {
+      const measuredHeadH = Math.max(30, Math.ceil(headTr.getBoundingClientRect().height || 34));
+      tableEl.style.setProperty('--qs-wb-head-h', `${measuredHeadH}px`);
       const filterTr = doc.createElement('tr');
       filterTr.className = 'qs-wb-col-filter-row';
       for (const col of activeCols) {

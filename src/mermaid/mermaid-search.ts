@@ -4,6 +4,9 @@ export interface IndexedDiagramNode {
   normalized: string;
 }
 
+const SPECIFIC_NODE_SELECTOR = 'g.node, g.cluster, g.actor, g.classGroup, g.statediagram-state, g.entity';
+const LAYER_GROUP_SELECTOR = '.root, .nodes, .clusters, .edgePaths, .edgeLabels, .output';
+
 export function extractDiagramSearchNodes(svg: SVGSVGElement): IndexedDiagramNode[] {
   const candidates = new Map<Element, string[]>();
   const labelEls = svg.querySelectorAll('text, foreignObject');
@@ -11,8 +14,18 @@ export function extractDiagramSearchNodes(svg: SVGSVGElement): IndexedDiagramNod
   for (const el of Array.from(labelEls)) {
     const raw = (el.textContent || '').replace(/\s+/g, ' ').trim();
     if (!raw) continue;
-    const host =
-      el.closest('g.node, g.cluster, g.actor, g.classGroup, g.statediagram-state, g[id]') || el;
+    let host: Element | null = el.closest(SPECIFIC_NODE_SELECTOR);
+    if (!host) {
+      const idGroup = el.closest('g[id]');
+      if (
+        idGroup
+        && !idGroup.matches(LAYER_GROUP_SELECTOR)
+        && !idGroup.querySelector(SPECIFIC_NODE_SELECTOR)
+      ) {
+        host = idGroup;
+      }
+    }
+    host = host || el;
     const existing = candidates.get(host);
     if (existing) existing.push(raw);
     else candidates.set(host, [raw]);
@@ -47,19 +60,38 @@ export function getNodeCenterInSvg(
   contentWidth: number,
   contentHeight: number,
 ): { x: number; y: number } {
+  // Prefer SVG root-relative CTM transform so Mermaid `<g transform="translate(x, y)">`
+  // and nested cluster transforms map accurately into SVG user-space coordinates.
   try {
     const graphics = node as SVGGraphicsElement;
     if (typeof graphics.getBBox === 'function') {
       const box = graphics.getBBox();
       if (Number.isFinite(box.width) && (box.width > 0 || box.height > 0)) {
+        let cx = box.x + box.width / 2;
+        let cy = box.y + box.height / 2;
+
+        const nodeCtm = typeof graphics.getCTM === 'function' ? graphics.getCTM() : null;
+        const svgCtm = typeof svg.getCTM === 'function' ? svg.getCTM() : null;
+        if (nodeCtm && svgCtm && typeof svg.createSVGPoint === 'function') {
+          const rel = svgCtm.inverse().multiply(nodeCtm);
+          const pt = svg.createSVGPoint();
+          pt.x = cx;
+          pt.y = cy;
+          const mapped = pt.matrixTransform(rel);
+          if (Number.isFinite(mapped.x) && Number.isFinite(mapped.y)) {
+            cx = mapped.x;
+            cy = mapped.y;
+          }
+        }
+
         const vb = svg.viewBox?.baseVal;
         const offsetX = vb && vb.width > 0 ? vb.x : 0;
         const offsetY = vb && vb.height > 0 ? vb.y : 0;
         const scaleX = vb && vb.width > 0 ? contentWidth / vb.width : 1;
         const scaleY = vb && vb.height > 0 ? contentHeight / vb.height : 1;
         return {
-          x: (box.x + box.width / 2 - offsetX) * scaleX,
-          y: (box.y + box.height / 2 - offsetY) * scaleY,
+          x: (cx - offsetX) * scaleX,
+          y: (cy - offsetY) * scaleY,
         };
       }
     }

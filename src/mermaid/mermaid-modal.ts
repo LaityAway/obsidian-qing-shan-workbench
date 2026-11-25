@@ -198,10 +198,32 @@ export function openMermaidLightbox(
     renderViewport();
   };
 
+  const DIMMED_NODE_OPACITY = '0.22';
+
+  const setNodeDimmed = (el: Element, dimmed: boolean, dimOpacity = DIMMED_NODE_OPACITY): void => {
+    el.classList.toggle('qs-wb-node-dim', dimmed);
+    const stylable = el as HTMLElement | SVGElement;
+    if (!stylable.style) return;
+    if (dimmed) {
+      if (stylable.dataset && stylable.dataset.qsWbOrigOpacity === undefined) {
+        stylable.dataset.qsWbOrigOpacity = stylable.style.opacity || '';
+      }
+      // Apply dimmed opacity dynamically so it overrides both Mermaid inline `opacity: 1`
+      // and `#mermaid-xxx .node` ID-scoped rules without requiring `!important` in CSS.
+      stylable.style.setProperty('opacity', dimOpacity);
+    } else if (stylable.dataset && stylable.dataset.qsWbOrigOpacity !== undefined) {
+      const orig = stylable.dataset.qsWbOrigOpacity;
+      if (orig) stylable.style.setProperty('opacity', orig);
+      else stylable.style.removeProperty('opacity');
+      delete stylable.dataset.qsWbOrigOpacity;
+    }
+  };
+
   const applySearch = (): void => {
     const q = searchInput.value.trim();
     for (const item of indexedNodes) {
-      item.element.classList.remove('qs-wb-node-dim', 'qs-wb-node-match', 'qs-wb-node-current');
+      setNodeDimmed(item.element, false);
+      item.element.classList.remove('qs-wb-node-match', 'qs-wb-node-current');
     }
     if (!q) {
       matchedNodes = [];
@@ -212,8 +234,11 @@ export function openMermaidLightbox(
     matchedNodes = filterDiagramNodes(indexedNodes, q);
     const matchSet = new Set(matchedNodes.map(m => m.element));
     for (const item of indexedNodes) {
-      if (matchSet.has(item.element)) item.element.classList.add('qs-wb-node-match');
-      else item.element.classList.add('qs-wb-node-dim');
+      if (matchSet.has(item.element)) {
+        item.element.classList.add('qs-wb-node-match');
+      } else if (!matchedNodes.some(m => item.element.contains(m.element))) {
+        setNodeDimmed(item.element, true);
+      }
     }
     if (matchedNodes.length) {
       matchIdx = 0;
@@ -424,10 +449,18 @@ export function openMermaidLightbox(
     renderViewport();
   };
 
+  const onBlur = (): void => {
+    activePointers.clear();
+    panStart = null;
+    lastPinchDist = 0;
+    stage.classList.remove('is-dragging');
+  };
+
   stage.addEventListener('pointerdown', onPointerDown);
   win.addEventListener('pointermove', onPointerMove);
   win.addEventListener('pointerup', onPointerUp);
   win.addEventListener('pointercancel', onPointerUp);
+  win.addEventListener('blur', onBlur);
   stage.addEventListener('wheel', onWheel, { passive: false });
   win.addEventListener('keydown', onKeyDown, true);
   win.addEventListener('resize', onResize);
@@ -441,6 +474,7 @@ export function openMermaidLightbox(
     win.removeEventListener('pointermove', onPointerMove);
     win.removeEventListener('pointerup', onPointerUp);
     win.removeEventListener('pointercancel', onPointerUp);
+    win.removeEventListener('blur', onBlur);
     stage.removeEventListener('wheel', onWheel);
     win.removeEventListener('keydown', onKeyDown, true);
     win.removeEventListener('resize', onResize);
