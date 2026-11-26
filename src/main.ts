@@ -174,6 +174,7 @@ export default class QingShanWorkbenchPlugin extends Plugin implements SettingsH
     this.closeActiveModalInDoc(doc);
     const handle = openTableWorkbench(table, this.settings, {
       title,
+      sourcePath,
       onClose: () => {
         if (this.activeModals.get(doc) === handle) this.activeModals.delete(doc);
       },

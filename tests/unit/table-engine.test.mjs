@@ -138,3 +138,92 @@ test('parseDateTimestamp handles single-digit / Chinese dates deterministically 
   assert.equal(model.parseDateTimestamp('2026-05-10 25:00'), null);
   assert.equal(model.detectColumnType(['2026-1-5', '2026年3月9日', '2026/11/25']), 'date');
 });
+
+test('column filters support >, >=, <, <=, lo..hi ranges, a|b OR, and !a|b negated OR', () => {
+  const grid = {
+    hasSpans: false,
+    hasExplicitHeader: true,
+    columns: [
+      { index: 0, label: 'Domain', type: 'text' },
+      { index: 1, label: 'Latency', type: 'number' },
+      { index: 2, label: 'Date', type: 'date' },
+      { index: 3, label: 'Version', type: 'semver' },
+    ],
+    rows: [
+      { rowIndex: 0, cells: [{ text: 'Billing', links: [] }, { text: '45ms', links: [] }, { text: '2026-01-15', links: [] }, { text: 'v0.4.0', links: [] }] },
+      { rowIndex: 1, cells: [{ text: 'Orders', links: [] }, { text: '500ms', links: [] }, { text: '2026-03-20', links: [] }, { text: 'v0.8.0', links: [] }] },
+      { rowIndex: 2, cells: [{ text: 'Analytics', links: [] }, { text: '1.2s', links: [] }, { text: '2026-06-10', links: [] }, { text: 'v1.0.0', links: [] }] },
+      { rowIndex: 3, cells: [{ text: 'Legacy', links: [] }, { text: '2.5s', links: [] }, { text: '2026-11-01', links: [] }, { text: 'v2.1.0', links: [] }] },
+    ],
+  };
+
+  assert.deepEqual(
+    query.queryTableRows(grid, { globalQuery: '', columnFilters: { 1: '>500ms' }, sort: null }).map(r => r.cells[0].text),
+    ['Analytics', 'Legacy'],
+  );
+  assert.deepEqual(
+    query.queryTableRows(grid, { globalQuery: '', columnFilters: { 1: '50ms..1.5s' }, sort: null }).map(r => r.cells[0].text),
+    ['Orders', 'Analytics'],
+  );
+  assert.deepEqual(
+    query.queryTableRows(grid, { globalQuery: '', columnFilters: { 2: '2026-03-01..2026-07-01' }, sort: null }).map(r => r.cells[0].text),
+    ['Orders', 'Analytics'],
+  );
+  assert.deepEqual(
+    query.queryTableRows(grid, { globalQuery: '', columnFilters: { 3: '>=v1.0.0' }, sort: null }).map(r => r.cells[0].text),
+    ['Analytics', 'Legacy'],
+  );
+  assert.deepEqual(
+    query.queryTableRows(grid, { globalQuery: '', columnFilters: { 0: 'Billing|Analytics' }, sort: null }).map(r => r.cells[0].text),
+    ['Billing', 'Analytics'],
+  );
+  assert.deepEqual(
+    query.queryTableRows(grid, { globalQuery: '', columnFilters: { 0: '!Billing|Legacy' }, sort: null }).map(r => r.cells[0].text),
+    ['Orders', 'Analytics'],
+  );
+});
+
+test('multi-column sort, numeric summaries, highlight extraction, and spreadsheet formula neutralization', () => {
+  const grid = {
+    hasSpans: false,
+    hasExplicitHeader: true,
+    columns: [
+      { index: 0, label: 'Group', type: 'text' },
+      { index: 1, label: 'Amount', type: 'number' },
+      { index: 2, label: 'Rate', type: 'percent' },
+    ],
+    rows: [
+      { rowIndex: 0, cells: [{ text: 'B', links: [] }, { text: '¥100', links: [] }, { text: '80%', links: [] }] },
+      { rowIndex: 1, cells: [{ text: 'A', links: [] }, { text: '¥200', links: [] }, { text: '90%', links: [] }] },
+      { rowIndex: 2, cells: [{ text: 'A', links: [] }, { text: '¥500', links: [] }, { text: '100%', links: [] }] },
+      { rowIndex: 3, cells: [{ text: 'B', links: [] }, { text: '', links: [] }, { text: '', links: [] }] },
+    ],
+  };
+
+  const multi = query.queryTableRows(grid, {
+    globalQuery: '',
+    columnFilters: {},
+    sort: [{ colIndex: 0, direction: 'asc' }, { colIndex: 1, direction: 'desc' }],
+  });
+  assert.deepEqual(multi.map(r => `${r.cells[0].text}:${r.cells[1].text}`), ['A:¥500', 'A:¥200', 'B:¥100', 'B:']);
+
+  const summaries = query.computeColumnSummaries(grid, multi, [0, 1, 2]);
+  assert.equal(summaries.length, 2);
+  assert.equal(summaries[0].sum, 800);
+  assert.equal(summaries[0].min, 100);
+  assert.equal(summaries[0].max, 500);
+  assert.equal(summaries[1].avg, 90);
+  assert.equal(query.formatSummaryValue(summaries[1].avg, 'percent'), '90%');
+
+  assert.deepEqual(query.extractHighlightTerms('alpha beta', 'gamma|>100|1..9'), ['alpha', 'beta', 'gamma']);
+  assert.deepEqual(query.extractHighlightTerms('alpha', '!excluded'), ['alpha']);
+
+  assert.equal(exp.sanitizeSpreadsheetCell('=SUM(A1:A5)'), "'=SUM(A1:A5)");
+  assert.equal(exp.sanitizeSpreadsheetCell('@CMD'), "'@CMD");
+  assert.equal(exp.sanitizeSpreadsheetCell('+cmd|calc'), "'+cmd|calc");
+  assert.equal(exp.sanitizeSpreadsheetCell('-cmd|calc'), "'-cmd|calc");
+  assert.equal(exp.sanitizeSpreadsheetCell('-120'), '-120');
+  assert.equal(exp.sanitizeSpreadsheetCell('+5.2%'), '+5.2%');
+  assert.equal(exp.sanitizeSpreadsheetCell('-'), '-');
+  assert.equal(exp.sanitizeSpreadsheetCell('+86-13800138000'), '+86-13800138000');
+});

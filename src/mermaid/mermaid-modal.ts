@@ -172,11 +172,11 @@ export function openMermaidLightbox(
     minimap?.sync(state, getBounds());
   };
 
-  minimap = createMermaidMinimap(doc, sourceSvg, (rx, ry) => {
+  minimap = createMermaidMinimap(doc, liveClone, (rx, ry) => {
     const b = getBounds();
     state = centerOnContentPoint(rx * b.contentWidth, ry * b.contentHeight, b, state.scale);
     renderViewport();
-  });
+  }, bgMode);
   minimap.setVisible(minimapVisible);
   stage.appendChild(minimap.element);
 
@@ -279,8 +279,12 @@ export function openMermaidLightbox(
     if (isDarkThemeDocument(doc) && sourceSvg.isConnected) {
       liveClone = mountLiveClone();
       indexedNodes = extractDiagramSearchNodes(liveClone);
+      minimap?.updateSource(liveClone, bgMode);
       if (searchInput.value.trim()) applySearch();
+    } else {
+      minimap?.updateSource(liveClone, bgMode);
     }
+    minimap?.sync(state, getBounds());
   });
   btnMinimap.addEventListener('click', () => {
     minimapVisible = !minimapVisible;
@@ -313,7 +317,7 @@ export function openMermaidLightbox(
   const safeSlug = title.replace(/[^\w\u4e00-\u9fff-]+/g, '-').replace(/^-+|-+$/g, '') || 'diagram';
   const getExportSource = (): SVGSVGElement => (sourceSvg.isConnected ? sourceSvg : liveClone);
 
-  btnDlSvg.addEventListener('click', () => {
+  const downloadSvg = (): void => {
     try {
       const { svgString } = buildStandaloneSvgString(getExportSource(), bgMode);
       const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
@@ -322,7 +326,25 @@ export function openMermaidLightbox(
     } catch {
       new Notice(t('SVG 导出失败', 'Failed to export SVG'));
     }
-  });
+  };
+
+  btnDlSvg.addEventListener('click', downloadSvg);
+
+  const showPngFallbackNotice = (): void => {
+    const frag = doc.createDocumentFragment();
+    const box = doc.createElement('div');
+    box.className = 'qs-wb-notice-fallback';
+    const msg = doc.createElement('span');
+    msg.textContent = t('PNG 渲染受限，可一键降级导出高保真 SVG：', 'PNG rendering restricted; export styled SVG instead:');
+    const actionBtn = doc.createElement('button');
+    actionBtn.type = 'button';
+    actionBtn.className = 'qs-wb-notice-action';
+    actionBtn.textContent = t('导出 SVG', 'Export SVG');
+    actionBtn.addEventListener('click', downloadSvg);
+    box.append(msg, actionBtn);
+    frag.appendChild(box);
+    new Notice(frag, 8000);
+  };
 
   const exportPng = async (copyOnly: boolean): Promise<void> => {
     try {
@@ -348,7 +370,7 @@ export function openMermaidLightbox(
           : t(`已下载 ${scale}× 高清 PNG`, `Downloaded ${scale}x PNG`),
       );
     } catch {
-      new Notice(t('PNG 渲染受限，建议使用「导出 SVG」', 'PNG rendering restricted; try Export SVG instead'));
+      showPngFallbackNotice();
     }
   };
 
@@ -412,9 +434,28 @@ export function openMermaidLightbox(
   const onWheel = (evt: WheelEvent): void => {
     if (settings.wheelZoomMode === 'ctrl' && !evt.ctrlKey && !evt.metaKey) return;
     evt.preventDefault();
+    const clampedDelta = Math.max(-120, Math.min(120, evt.deltaY));
+    if (clampedDelta === 0) return;
     const rect = stage.getBoundingClientRect();
-    const factor = evt.deltaY < 0 ? 1.14 : 0.88;
+    // Continuous exponential zoom provides smooth trackpad pinch and responsive wheel steps.
+    const factor = Math.exp(-clampedDelta * 0.0028);
     state = zoomAtPoint(state, factor, evt.clientX - rect.left, evt.clientY - rect.top, getBounds());
+    renderViewport();
+  };
+
+  const onStageDblClick = (evt: MouseEvent): void => {
+    if ((evt.target as Element)?.closest?.('.qs-wb-minimap')) return;
+    const b = getBounds();
+    if (Math.abs(state.scale - 1) < 0.06) {
+      state = computeFitViewport(b);
+    } else {
+      const rect = stage.getBoundingClientRect();
+      const clickX = evt.clientX - rect.left;
+      const clickY = evt.clientY - rect.top;
+      const contentX = (clickX - state.x) / state.scale;
+      const contentY = (clickY - state.y) / state.scale;
+      state = centerOnContentPoint(contentX, contentY, b, 1);
+    }
     renderViewport();
   };
 
@@ -462,6 +503,7 @@ export function openMermaidLightbox(
   win.addEventListener('pointercancel', onPointerUp);
   win.addEventListener('blur', onBlur);
   stage.addEventListener('wheel', onWheel, { passive: false });
+  stage.addEventListener('dblclick', onStageDblClick);
   win.addEventListener('keydown', onKeyDown, true);
   win.addEventListener('resize', onResize);
   overlay.addEventListener('click', onOverlayClick);
@@ -476,6 +518,7 @@ export function openMermaidLightbox(
     win.removeEventListener('pointercancel', onPointerUp);
     win.removeEventListener('blur', onBlur);
     stage.removeEventListener('wheel', onWheel);
+    stage.removeEventListener('dblclick', onStageDblClick);
     win.removeEventListener('keydown', onKeyDown, true);
     win.removeEventListener('resize', onResize);
     overlay.removeEventListener('click', onOverlayClick);

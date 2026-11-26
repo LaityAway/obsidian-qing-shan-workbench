@@ -20,6 +20,7 @@ export interface TableColumn {
 export interface TableRowData {
   rowIndex: number;
   cells: TableCellData[];
+  searchText?: string;
 }
 
 export interface TableGrid {
@@ -192,7 +193,11 @@ export function extractTableGrid(table: HTMLTableElement): TableGrid {
   const rows: TableRowData[] = rawRows.map((cells, rowIndex) => {
     const padded = cells.slice();
     while (padded.length < maxCols) padded.push({ text: '', links: [] });
-    return { rowIndex, cells: padded };
+    return {
+      rowIndex,
+      cells: padded,
+      searchText: padded.map(c => c.text).join(' ').toLowerCase(),
+    };
   });
 
   const columns: TableColumn[] = headerLabels.map((label, index) => ({

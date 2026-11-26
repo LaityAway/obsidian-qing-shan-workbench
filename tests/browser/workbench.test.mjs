@@ -30,7 +30,7 @@ async function buildBrowserHarness() {
         import { openMermaidLightbox } from './src/mermaid/mermaid-modal';
         import { buildStandaloneSvgString, renderSvgToPngBlob } from './src/mermaid/mermaid-export';
         import { getNodeCenterInSvg } from './src/mermaid/mermaid-search';
-        import { openTableWorkbench } from './src/table/table-modal';
+        import { openTableWorkbench, clearTableSessionCache } from './src/table/table-modal';
         import { enhanceInlineTable } from './src/table/table-inline';
         import { LivePreviewTriggerManager } from './src/detectors/editor-detector';
         import { DEFAULT_SETTINGS } from './src/settings';
@@ -42,6 +42,7 @@ async function buildBrowserHarness() {
           renderSvgToPngBlob,
           getNodeCenterInSvg,
           openTableWorkbench,
+          clearTableSessionCache,
           enhanceInlineTable,
           LivePreviewTriggerManager,
           MarkdownRenderChild,
@@ -601,6 +602,227 @@ test('Chromium E2E: P0/P1 regressions (transform search center, inline opacity d
     assert.equal(res.lpNoneT, 0);
     assert.match(res.headHVar, /^\d+px$/);
     assert.equal(res.blurStoppedResize, true);
+  } finally {
+    await browser.close();
+  }
+});
+
+test('Chromium E2E: v1.1.0 upgrades (zero-rebuild resize, multi-sort, summary bar, mark highlight, session memory, mobile overlay drawer, Mermaid continuous zoom/dblclick/minimap sync)', async t => {
+  const chromium = resolveChromium();
+  if (!chromium) {
+    t.skip('Playwright not available (set PLAYWRIGHT_MODULE to run browser tests)');
+    return;
+  }
+  const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+  const harness = await buildBrowserHarness();
+
+  const browser = await chromium.launch({
+    headless: true,
+    ...(CHROME_PATH && fs.existsSync(CHROME_PATH) ? { executablePath: CHROME_PATH } : {}),
+  });
+  try {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+    await page.setContent(`
+      <style>
+        body { margin: 0; --background-primary: #1e242c; --background-secondary: #181e25; --text-normal: #c4cedb; --text-muted: #8b9bb0; --background-modifier-border: #323d4c; --interactive-accent: #4870ac; }
+      </style>
+      <style>${css}</style>
+      <body class="theme-dark">
+        <div class="mermaid">
+          <svg id="mm-v110" viewBox="0 0 800 400" width="800" height="400" xmlns="http://www.w3.org/2000/svg">
+            <style>
+              #mm-v110 .node rect { fill: #252d38; stroke: #4870ac; }
+              #mm-v110 .node text { fill: #dbe7f6; }
+              #mm-v110 .bare { fill: #e2e8f0; }
+            </style>
+            <text id="mm-bare" class="bare" x="400" y="30">Header Text</text>
+            <g class="node" id="m-a" transform="translate(200, 180)"><rect x="-60" y="-20" width="120" height="40"/><text x="0" y="4" text-anchor="middle">Gateway</text></g>
+          </svg>
+        </div>
+        <table id="analytics-tbl">
+          <thead><tr><th>Domain</th><th>Amount</th><th>Rate</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td>Billing</td><td>¥2,000</td><td>95%</td><td>Core gateway</td></tr>
+            <tr><td>Billing</td><td>¥500</td><td>80%</td><td>Minor fee</td></tr>
+            <tr><td>Analytics</td><td>¥3,500</td><td>90%</td><td>Daily rollup</td></tr>
+            <tr><td>Orders</td><td>¥1,200</td><td>85%</td><td>Core dispatch</td></tr>
+          </tbody>
+        </table>
+      </body>
+    `);
+    await page.addScriptTag({ content: harness });
+
+    const desktopRes = await page.evaluate(async () => {
+      window.__WB__.clearTableSessionCache();
+      let copiedText = '';
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async txt => { copiedText = txt; } },
+      });
+
+      const tbl = document.getElementById('analytics-tbl');
+      const handle = window.__WB__.openTableWorkbench(tbl, window.__WB__.DEFAULT_SETTINGS, {
+        title: 'Analytics',
+        sourcePath: 'Reports/Analytics.md',
+      });
+      const overlay = document.querySelector('.qs-wb-table-overlay');
+
+      // 1. Zero-tbody-rebuild column drag resize
+      const firstTrBefore = overlay.querySelector('tbody tr.qs-wb-data-row');
+      const firstTh = overlay.querySelector('thead th.qs-wb-th');
+      const resizer = firstTh.querySelector('.qs-wb-col-resizer');
+      const startW = firstTh.getBoundingClientRect().width;
+      resizer.dispatchEvent(new PointerEvent('pointerdown', { clientX: 100, bubbles: true }));
+      for (let step = 1; step <= 4; step++) {
+        window.dispatchEvent(new PointerEvent('pointermove', { clientX: 100 + step * 20, bubbles: true }));
+      }
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      window.dispatchEvent(new PointerEvent('pointerup', { clientX: 180, bubbles: true }));
+      const firstTrAfter = overlay.querySelector('tbody tr.qs-wb-data-row');
+      const sameTrInstance = firstTrBefore === firstTrAfter;
+      const colWidthAfterDrag = parseInt(overlay.querySelector('colgroup col').style.width, 10);
+
+      // 2. Shift+Click multi-column sort (Domain asc, then Amount desc)
+      const ths = overlay.querySelectorAll('thead th.qs-wb-th');
+      ths[0].click();
+      overlay.querySelectorAll('thead th.qs-wb-th')[1].dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true }));
+      overlay.querySelectorAll('thead th.qs-wb-th')[1].dispatchEvent(new MouseEvent('click', { shiftKey: true, bubbles: true }));
+      const sortIndicators = [...overlay.querySelectorAll('.qs-wb-sort-ind')].map(el => el.textContent);
+      const multiSortOrder = [...overlay.querySelectorAll('tbody tr.qs-wb-data-row')].map(
+        tr => `${tr.children[0].textContent}:${tr.children[1].textContent}`,
+      );
+
+      // 3. Summary bar + column numeric comparison filter (>1000)
+      const summaryBefore = [...overlay.querySelectorAll('.qs-wb-summary-chip')].map(el => el.textContent);
+      const filterBtn = [...overlay.querySelectorAll('.qs-wb-btn')].find(b => b.textContent.includes('列筛选'));
+      filterBtn.click();
+      const amountFilter = overlay.querySelectorAll('.qs-wb-col-filter-input')[1];
+      amountFilter.value = '>1000';
+      amountFilter.dispatchEvent(new Event('input', { bubbles: true }));
+      const summaryAfterFilter = [...overlay.querySelectorAll('.qs-wb-summary-chip')].map(el => el.textContent);
+
+      // 4. Search <mark> highlight & double-click cell copy
+      const searchInput = overlay.querySelector('.qs-wb-table-search');
+      searchInput.value = 'Core';
+      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+      const markTexts = [...overlay.querySelectorAll('tbody mark.qs-wb-hl')].map(el => el.textContent);
+      const firstCell = overlay.querySelector('tbody tr.qs-wb-data-row td');
+      firstCell.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 20));
+      const dblClickCopied = copiedText;
+
+      // 5. Session state memory: hide Notes column, close, and reopen
+      const colBtn = [...overlay.querySelectorAll('.qs-wb-btn')].find(b => b.textContent.includes('列显隐'));
+      colBtn.click();
+      const colCheckboxes = overlay.querySelectorAll('.qs-wb-col-menu input[type="checkbox"]');
+      colCheckboxes[3].click();
+      handle.close();
+
+      const handle2 = window.__WB__.openTableWorkbench(tbl, window.__WB__.DEFAULT_SETTINGS, {
+        title: 'Analytics',
+        sourcePath: 'Reports/Analytics.md',
+      });
+      const overlay2 = document.querySelector('.qs-wb-table-overlay');
+      const restoredVisibleCols = overlay2.querySelectorAll('thead th.qs-wb-th').length;
+      const restoredCol0Width = parseInt(overlay2.querySelector('colgroup col').style.width, 10);
+      handle2.close();
+
+      // 6. Mermaid continuous zoom + double-click toggle + minimap bg sync
+      const svg = document.getElementById('mm-v110');
+      const mmHandle = window.__WB__.openMermaidLightbox(svg, window.__WB__.DEFAULT_SETTINGS, 'V110');
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const mmOverlay = document.querySelector('.qs-wb-mermaid-overlay');
+      const stage = mmOverlay.querySelector('.qs-wb-mermaid-stage');
+      const readout = mmOverlay.querySelector('.qs-wb-zoom-readout');
+
+      const parsePct = () => parseInt(readout.textContent, 10);
+      stage.dispatchEvent(new MouseEvent('dblclick', { clientX: 400, clientY: 300, bubbles: true }));
+      const pctAfterFirstDbl = parsePct();
+      stage.dispatchEvent(new WheelEvent('wheel', { deltaY: -10, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
+      const pctAfterSmallWheel = parsePct();
+      stage.dispatchEvent(new WheelEvent('wheel', { deltaY: -120, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
+      const pctAfterBigWheel = parsePct();
+      // Reset to 100% via dblclick when != 1, then dblclick again to Fit
+      stage.dispatchEvent(new MouseEvent('dblclick', { clientX: 400, clientY: 300, bubbles: true }));
+      const pctBackToOne = parsePct();
+      stage.dispatchEvent(new MouseEvent('dblclick', { clientX: 400, clientY: 300, bubbles: true }));
+      const pctBackToFit = parsePct();
+
+      const bgBtn = [...mmOverlay.querySelectorAll('.qs-wb-btn')].find(b => b.textContent.includes('主题底'));
+      bgBtn.click();
+      const minimap = mmOverlay.querySelector('.qs-wb-minimap');
+      const minimapBgAttr = minimap.dataset.bg;
+      const minimapBgColor = getComputedStyle(minimap).backgroundColor;
+      const minimapBareFill = getComputedStyle(minimap.querySelector('.bare')).fill;
+      const { blob } = await window.__WB__.renderSvgToPngBlob(svg, 'white', 2);
+      mmHandle.close();
+
+      return {
+        startW,
+        sameTrInstance,
+        colWidthAfterDrag,
+        sortIndicators,
+        multiSortOrder,
+        summaryBefore,
+        summaryAfterFilter,
+        markTexts,
+        dblClickCopied,
+        restoredVisibleCols,
+        restoredCol0Width,
+        pctAfterFirstDbl,
+        pctAfterSmallWheel,
+        pctAfterBigWheel,
+        pctBackToOne,
+        pctBackToFit,
+        minimapBgAttr,
+        minimapBgColor,
+        minimapBareFill,
+        pngSize: blob.size,
+      };
+    });
+
+    assert.equal(desktopRes.sameTrInstance, true);
+    assert.ok(desktopRes.colWidthAfterDrag >= Math.round(desktopRes.startW + 70));
+    assert.deepEqual(desktopRes.sortIndicators.slice(0, 2), ['1▲', '2▼']);
+    assert.deepEqual(desktopRes.multiSortOrder, ['Analytics:¥3,500', 'Billing:¥2,000', 'Billing:¥500', 'Orders:¥1,200']);
+    assert.ok(desktopRes.summaryBefore[0].includes('7,200'));
+    assert.ok(desktopRes.summaryAfterFilter[0].includes('6,700'));
+    assert.ok(desktopRes.markTexts.length >= 2 && desktopRes.markTexts.every(m => m.toLowerCase() === 'core'));
+    assert.equal(desktopRes.dblClickCopied, 'Billing');
+    assert.equal(desktopRes.restoredVisibleCols, 3);
+    assert.equal(desktopRes.restoredCol0Width, desktopRes.colWidthAfterDrag);
+    assert.equal(desktopRes.pctAfterFirstDbl, 100);
+    assert.ok(desktopRes.pctAfterSmallWheel > 100 && desktopRes.pctAfterSmallWheel < 110);
+    assert.ok(desktopRes.pctAfterBigWheel > desktopRes.pctAfterSmallWheel + 20);
+    assert.equal(desktopRes.pctBackToOne, 100);
+    assert.notEqual(desktopRes.pctBackToFit, 100);
+    assert.equal(desktopRes.minimapBgAttr, 'white');
+    assert.equal(desktopRes.minimapBgColor, 'rgb(255, 255, 255)');
+    assert.equal(desktopRes.minimapBareFill, 'rgb(30, 41, 59)');
+    assert.ok(desktopRes.pngSize > 500);
+
+    // 7. Mobile narrow viewport: drawer starts closed and slides out as absolute overlay on row click
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileRes = await page.evaluate(() => {
+      window.__WB__.clearTableSessionCache();
+      const tbl = document.getElementById('analytics-tbl');
+      const handle = window.__WB__.openTableWorkbench(tbl, window.__WB__.DEFAULT_SETTINGS, {
+        title: 'MobileTbl',
+        sourcePath: 'Mobile.md',
+      });
+      const overlay = document.querySelector('.qs-wb-table-overlay');
+      const drawer = overlay.querySelector('.qs-wb-drawer');
+      const initiallyClosed = drawer.classList.contains('is-closed');
+      overlay.querySelector('tbody tr.qs-wb-data-row').click();
+      const openAfterRowClick = !drawer.classList.contains('is-closed');
+      const drawerPosition = getComputedStyle(drawer).position;
+      handle.close();
+      return { initiallyClosed, openAfterRowClick, drawerPosition };
+    });
+
+    assert.equal(mobileRes.initiallyClosed, true);
+    assert.equal(mobileRes.openAfterRowClick, true);
+    assert.equal(mobileRes.drawerPosition, 'absolute');
   } finally {
     await browser.close();
   }

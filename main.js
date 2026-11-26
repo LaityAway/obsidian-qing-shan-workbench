@@ -608,36 +608,59 @@ ${serialized}`;
   }
   return { svgString: serialized, width: totalW, height: totalH };
 }
-async function renderSvgToPngBlob(sourceSvg, bgMode, requestedScale) {
-  const doc = sourceSvg.ownerDocument;
-  const { svgString, width, height } = buildStandaloneSvgString(sourceSvg, bgMode);
-  const { scale, clamped } = computeSafeExportScale(width, height, requestedScale);
-  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
-  const img = await new Promise((resolve, reject) => {
+function loadImageFromSrc(src) {
+  return new Promise((resolve, reject) => {
     const image = new Image();
     image.decoding = "async";
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error("Failed to decode SVG for PNG rendering"));
-    image.src = dataUrl;
+    image.src = src;
   });
+}
+async function rasterizeSvgImageToBlob(doc, img, width, height, scale, bgColor) {
   const canvas = doc.createElement("canvas");
   canvas.width = Math.max(1, Math.round(width * scale));
   canvas.height = Math.max(1, Math.round(height * scale));
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Canvas 2D context unavailable");
-  const bgColor = resolveExportBackground(doc, bgMode);
   if (bgColor) {
     ctx.fillStyle = bgColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }
   ctx.scale(scale, scale);
   ctx.drawImage(img, 0, 0, width, height);
-  const blob = await new Promise((resolve, reject) => {
-    canvas.toBlob((result) => {
-      if (result) resolve(result);
-      else reject(new Error("Canvas toBlob returned null"));
-    }, "image/png");
+  return new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob((result) => {
+        if (result) resolve(result);
+        else reject(new Error("Canvas toBlob returned null"));
+      }, "image/png");
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
   });
+}
+async function renderSvgToPngBlob(sourceSvg, bgMode, requestedScale) {
+  const doc = sourceSvg.ownerDocument;
+  const { svgString, width, height } = buildStandaloneSvgString(sourceSvg, bgMode);
+  const { scale, clamped } = computeSafeExportScale(width, height, requestedScale);
+  const bgColor = resolveExportBackground(doc, bgMode);
+  const hasForeignObject = /<foreignObject\b/i.test(svgString);
+  if (!hasForeignObject && typeof URL !== "undefined" && typeof URL.createObjectURL === "function") {
+    const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+    const objUrl = URL.createObjectURL(svgBlob);
+    try {
+      const img2 = await loadImageFromSrc(objUrl);
+      const blob2 = await rasterizeSvgImageToBlob(doc, img2, width, height, scale, bgColor);
+      return { blob: blob2, scale, clamped };
+    } catch {
+    } finally {
+      URL.revokeObjectURL(objUrl);
+    }
+  }
+  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
+  const img = await loadImageFromSrc(dataUrl);
+  const blob = await rasterizeSvgImageToBlob(doc, img, width, height, scale, bgColor);
   return { blob, scale, clamped };
 }
 function triggerBlobDownload(doc, blob, filename) {
@@ -839,7 +862,11 @@ function extractTableGrid(table) {
   const rows = rawRows.map((cells, rowIndex) => {
     const padded = cells.slice();
     while (padded.length < maxCols) padded.push({ text: "", links: [] });
-    return { rowIndex, cells: padded };
+    return {
+      rowIndex,
+      cells: padded,
+      searchText: padded.map((c) => c.text).join(" ").toLowerCase()
+    };
   });
   const columns = headerLabels.map((label, index) => ({
     index,
@@ -850,15 +877,25 @@ function extractTableGrid(table) {
 }
 
 // src/table/table-export.ts
-function escapeTsvCell(raw) {
-  const s = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+var FORMULA_PREFIX_RE = /^(?:[=@\t\r]|[+-](?=[A-Za-z_@(=]))/;
+function sanitizeSpreadsheetCell(raw) {
+  const trimmedStart = raw.replace(/^ +/, "");
+  if (FORMULA_PREFIX_RE.test(trimmedStart)) {
+    return `'${raw}`;
+  }
+  return raw;
+}
+function escapeTsvCell(raw, sanitizeFormulas) {
+  let s = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (sanitizeFormulas) s = sanitizeSpreadsheetCell(s);
   if (/[\t\n"]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
 }
-function escapeCsvCell(raw) {
-  const s = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+function escapeCsvCell(raw, sanitizeFormulas) {
+  let s = raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  if (sanitizeFormulas) s = sanitizeSpreadsheetCell(s);
   if (/[",\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
@@ -867,19 +904,19 @@ function escapeCsvCell(raw) {
 function escapeMdCell(raw) {
   return raw.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\|/g, "\\|").replace(/\n/g, "<br>");
 }
-function serializeToTsv(columns, rows, visibleColIndexes) {
+function serializeToTsv(columns, rows, visibleColIndexes, sanitizeFormulas = true) {
   const colIds = visibleColIndexes ?? columns.map((c) => c.index);
-  const headerLine = colIds.map((i) => escapeTsvCell(columns[i]?.label ?? "")).join("	");
+  const headerLine = colIds.map((i) => escapeTsvCell(columns[i]?.label ?? "", sanitizeFormulas)).join("	");
   const bodyLines = rows.map(
-    (row) => colIds.map((i) => escapeTsvCell(row.cells[i]?.text ?? "")).join("	")
+    (row) => colIds.map((i) => escapeTsvCell(row.cells[i]?.text ?? "", sanitizeFormulas)).join("	")
   );
   return [headerLine, ...bodyLines].join("\n");
 }
-function serializeToCsv(columns, rows, visibleColIndexes, withBom = true) {
+function serializeToCsv(columns, rows, visibleColIndexes, withBom = true, sanitizeFormulas = true) {
   const colIds = visibleColIndexes ?? columns.map((c) => c.index);
-  const headerLine = colIds.map((i) => escapeCsvCell(columns[i]?.label ?? "")).join(",");
+  const headerLine = colIds.map((i) => escapeCsvCell(columns[i]?.label ?? "", sanitizeFormulas)).join(",");
   const bodyLines = rows.map(
-    (row) => colIds.map((i) => escapeCsvCell(row.cells[i]?.text ?? "")).join(",")
+    (row) => colIds.map((i) => escapeCsvCell(row.cells[i]?.text ?? "", sanitizeFormulas)).join(",")
   );
   const content = [headerLine, ...bodyLines].join("\r\n");
   return withBom ? `\uFEFF${content}` : content;
@@ -956,23 +993,43 @@ function enhanceInlineTable(table, child, settings, callbacks) {
   host.style.setProperty("--qs-wb-inline-max-h", `${settings.inlineMaxHeight}px`);
   host.insertBefore(bar, host.firstChild);
   let frozen = false;
+  let barObserver = null;
+  let cachedRowTexts = null;
+  const syncBarHeight = () => {
+    if (!frozen) return;
+    const barH = Math.max(32, Math.ceil(bar.getBoundingClientRect().height || 36));
+    host.style.setProperty("--qs-wb-bar-h", `${barH}px`);
+  };
+  const disconnectBarObserver = () => {
+    barObserver?.disconnect();
+    barObserver = null;
+  };
   const setFrozen = (next) => {
     frozen = next;
     host.classList.toggle("qs-wb-table-frozen", frozen);
     btnFreeze.classList.toggle("is-active", frozen);
     if (frozen) {
-      const barH = Math.max(32, Math.ceil(bar.getBoundingClientRect().height || 36));
-      host.style.setProperty("--qs-wb-bar-h", `${barH}px`);
+      syncBarHeight();
+      disconnectBarObserver();
+      const RO = doc.defaultView?.ResizeObserver ?? (typeof ResizeObserver === "function" ? ResizeObserver : null);
+      if (RO) {
+        barObserver = new RO(() => syncBarHeight());
+        barObserver.observe(bar);
+      }
     } else {
+      disconnectBarObserver();
       host.style.removeProperty("--qs-wb-bar-h");
     }
   };
   const applyFilter = () => {
     const q = filterInput.value.trim().toLowerCase();
+    if (cachedRowTexts === null) {
+      cachedRowTexts = bodyRows.map((tr) => (tr.textContent || "").toLowerCase());
+    }
     let visible = 0;
-    for (const tr of bodyRows) {
-      const match = !q || (tr.textContent || "").toLowerCase().includes(q);
-      tr.classList.toggle("qs-wb-row-hidden", !match);
+    for (let i = 0; i < bodyRows.length; i++) {
+      const match = !q || cachedRowTexts[i].includes(q);
+      bodyRows[i].classList.toggle("qs-wb-row-hidden", !match);
       if (match) visible++;
     }
     meta.textContent = q ? `${visible}/${rowCount}\xD7${colCount}` : `${rowCount}\xD7${colCount}`;
@@ -1005,6 +1062,8 @@ function enhanceInlineTable(table, child, settings, callbacks) {
     callbacks.onOpenWorkbench(table);
   });
   child.register(() => {
+    disconnectBarObserver();
+    cachedRowTexts = null;
     for (const tr of bodyRows) tr.classList.remove("qs-wb-row-hidden");
     host.classList.remove("qs-wb-table-host", "qs-wb-table-frozen");
     host.style.removeProperty("--qs-wb-inline-max-h");
@@ -1513,24 +1572,44 @@ function getNodeCenterInSvg(node, svg, contentWidth, contentHeight) {
 }
 
 // src/mermaid/mermaid-minimap.ts
-function createMermaidMinimap(doc, sourceSvg, onNavigate) {
+function createMermaidMinimap(doc, sourceSvg, onNavigate, initialBgMode = "theme") {
   const wrap = doc.createElement("div");
   wrap.className = "qs-wb-minimap";
+  wrap.dataset.bg = initialBgMode;
   wrap.title = t("\u70B9\u51FB\u6216\u62D6\u62FD\u5C0F\u5730\u56FE\u5FEB\u901F\u6F2B\u6E38", "Click or drag minimap to pan");
   const label = doc.createElement("span");
   label.className = "qs-wb-minimap-label";
   label.textContent = "Minimap";
   wrap.appendChild(label);
-  const previewSvg = cloneSvgWithScopedId(sourceSvg, "qs-mini");
-  previewSvg.removeAttribute("width");
-  previewSvg.removeAttribute("height");
-  previewSvg.classList.add("qs-wb-minimap-svg");
-  previewSvg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-  previewSvg.setAttribute("aria-hidden", "true");
-  wrap.appendChild(previewSvg);
   const vpBox = doc.createElement("div");
   vpBox.className = "qs-wb-minimap-vp";
   wrap.appendChild(vpBox);
+  let previewSvg = null;
+  const mountPreviewSvg = (svg) => {
+    previewSvg?.remove();
+    const cloned = cloneSvgWithScopedId(svg, "qs-mini");
+    cloned.removeAttribute("width");
+    cloned.removeAttribute("height");
+    cloned.style.removeProperty("width");
+    cloned.style.removeProperty("height");
+    cloned.classList.remove("qs-wb-live-svg");
+    cloned.classList.add("qs-wb-minimap-svg");
+    for (const el of Array.from(cloned.querySelectorAll(".qs-wb-node-dim, .qs-wb-node-match, .qs-wb-node-current"))) {
+      el.classList.remove("qs-wb-node-dim", "qs-wb-node-match", "qs-wb-node-current");
+      const stylable = el;
+      if (stylable.dataset && stylable.dataset.qsWbOrigOpacity !== void 0) {
+        const orig = stylable.dataset.qsWbOrigOpacity;
+        if (orig) stylable.style.setProperty("opacity", orig);
+        else stylable.style.removeProperty("opacity");
+        delete stylable.dataset.qsWbOrigOpacity;
+      }
+    }
+    cloned.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    cloned.setAttribute("aria-hidden", "true");
+    wrap.insertBefore(cloned, vpBox);
+    previewSvg = cloned;
+  };
+  mountPreviewSvg(sourceSvg);
   const win = doc.defaultView || window;
   let dragging = false;
   const navigateFromEvent = (evt) => {
@@ -1571,6 +1650,10 @@ function createMermaidMinimap(doc, sourceSvg, onNavigate) {
     },
     setVisible(visible) {
       wrap.classList.toggle("is-hidden", !visible);
+    },
+    updateSource(nextSvg, bgMode) {
+      if (bgMode) wrap.dataset.bg = bgMode;
+      mountPreviewSvg(nextSvg);
     },
     destroy() {
       wrap.removeEventListener("pointerdown", onDown);
@@ -1694,11 +1777,11 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
     zoomReadout.textContent = `${Math.round(state.scale * 100)}%`;
     minimap?.sync(state, getBounds());
   };
-  minimap = createMermaidMinimap(doc, sourceSvg, (rx, ry) => {
+  minimap = createMermaidMinimap(doc, liveClone, (rx, ry) => {
     const b = getBounds();
     state = centerOnContentPoint(rx * b.contentWidth, ry * b.contentHeight, b, state.scale);
     renderViewport();
-  });
+  }, bgMode);
   minimap.setVisible(minimapVisible);
   stage.appendChild(minimap.element);
   let indexedNodes = extractDiagramSearchNodes(liveClone);
@@ -1790,8 +1873,12 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
     if (isDarkThemeDocument(doc) && sourceSvg.isConnected) {
       liveClone = mountLiveClone();
       indexedNodes = extractDiagramSearchNodes(liveClone);
+      minimap?.updateSource(liveClone, bgMode);
       if (searchInput.value.trim()) applySearch();
+    } else {
+      minimap?.updateSource(liveClone, bgMode);
     }
+    minimap?.sync(state, getBounds());
   });
   btnMinimap.addEventListener("click", () => {
     minimapVisible = !minimapVisible;
@@ -1819,7 +1906,7 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
   });
   const safeSlug = title.replace(/[^\w\u4e00-\u9fff-]+/g, "-").replace(/^-+|-+$/g, "") || "diagram";
   const getExportSource = () => sourceSvg.isConnected ? sourceSvg : liveClone;
-  btnDlSvg.addEventListener("click", () => {
+  const downloadSvg = () => {
     try {
       const { svgString } = buildStandaloneSvgString(getExportSource(), bgMode);
       const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
@@ -1828,7 +1915,23 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
     } catch {
       new import_obsidian7.Notice(t("SVG \u5BFC\u51FA\u5931\u8D25", "Failed to export SVG"));
     }
-  });
+  };
+  btnDlSvg.addEventListener("click", downloadSvg);
+  const showPngFallbackNotice = () => {
+    const frag = doc.createDocumentFragment();
+    const box = doc.createElement("div");
+    box.className = "qs-wb-notice-fallback";
+    const msg = doc.createElement("span");
+    msg.textContent = t("PNG \u6E32\u67D3\u53D7\u9650\uFF0C\u53EF\u4E00\u952E\u964D\u7EA7\u5BFC\u51FA\u9AD8\u4FDD\u771F SVG\uFF1A", "PNG rendering restricted; export styled SVG instead:");
+    const actionBtn = doc.createElement("button");
+    actionBtn.type = "button";
+    actionBtn.className = "qs-wb-notice-action";
+    actionBtn.textContent = t("\u5BFC\u51FA SVG", "Export SVG");
+    actionBtn.addEventListener("click", downloadSvg);
+    box.append(msg, actionBtn);
+    frag.appendChild(box);
+    new import_obsidian7.Notice(frag, 8e3);
+  };
   const exportPng = async (copyOnly) => {
     try {
       const { blob, scale, clamped } = await renderSvgToPngBlob(getExportSource(), bgMode, settings.pngScale);
@@ -1849,7 +1952,7 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
         clamped ? t(`\u5DF2\u4E0B\u8F7D ${scale}\xD7 PNG\uFF08\u8D85\u5927\u56FE\u81EA\u52A8\u964D\u6863\uFF09`, `Downloaded ${scale}x PNG (auto-clamped)`) : t(`\u5DF2\u4E0B\u8F7D ${scale}\xD7 \u9AD8\u6E05 PNG`, `Downloaded ${scale}x PNG`)
       );
     } catch {
-      new import_obsidian7.Notice(t("PNG \u6E32\u67D3\u53D7\u9650\uFF0C\u5EFA\u8BAE\u4F7F\u7528\u300C\u5BFC\u51FA SVG\u300D", "PNG rendering restricted; try Export SVG instead"));
+      showPngFallbackNotice();
     }
   };
   btnCopyPng.addEventListener("click", () => {
@@ -1910,9 +2013,26 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
   const onWheel = (evt) => {
     if (settings.wheelZoomMode === "ctrl" && !evt.ctrlKey && !evt.metaKey) return;
     evt.preventDefault();
+    const clampedDelta = Math.max(-120, Math.min(120, evt.deltaY));
+    if (clampedDelta === 0) return;
     const rect = stage.getBoundingClientRect();
-    const factor = evt.deltaY < 0 ? 1.14 : 0.88;
+    const factor = Math.exp(-clampedDelta * 28e-4);
     state = zoomAtPoint(state, factor, evt.clientX - rect.left, evt.clientY - rect.top, getBounds());
+    renderViewport();
+  };
+  const onStageDblClick = (evt) => {
+    if (evt.target?.closest?.(".qs-wb-minimap")) return;
+    const b = getBounds();
+    if (Math.abs(state.scale - 1) < 0.06) {
+      state = computeFitViewport(b);
+    } else {
+      const rect = stage.getBoundingClientRect();
+      const clickX = evt.clientX - rect.left;
+      const clickY = evt.clientY - rect.top;
+      const contentX = (clickX - state.x) / state.scale;
+      const contentY = (clickY - state.y) / state.scale;
+      state = centerOnContentPoint(contentX, contentY, b, 1);
+    }
     renderViewport();
   };
   const onKeyDown = (evt) => {
@@ -1968,6 +2088,7 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
   win.addEventListener("pointercancel", onPointerUp);
   win.addEventListener("blur", onBlur);
   stage.addEventListener("wheel", onWheel, { passive: false });
+  stage.addEventListener("dblclick", onStageDblClick);
   win.addEventListener("keydown", onKeyDown, true);
   win.addEventListener("resize", onResize);
   overlay.addEventListener("click", onOverlayClick);
@@ -1981,6 +2102,7 @@ function openMermaidLightbox(sourceSvg, settings, title = "Mermaid", onClose) {
     win.removeEventListener("pointercancel", onPointerUp);
     win.removeEventListener("blur", onBlur);
     stage.removeEventListener("wheel", onWheel);
+    stage.removeEventListener("dblclick", onStageDblClick);
     win.removeEventListener("keydown", onKeyDown, true);
     win.removeEventListener("resize", onResize);
     overlay.removeEventListener("click", onOverlayClick);
@@ -2007,78 +2129,286 @@ var zhCollator = new Intl.Collator("zh-Hans-CN", {
   numeric: true,
   sensitivity: "base"
 });
-function compareCellValues(aRaw, bRaw, type) {
-  const a = aRaw.trim();
-  const b = bRaw.trim();
-  if (!a && !b) return 0;
-  if (!a) return 1;
-  if (!b) return -1;
+var sortKeyCache = /* @__PURE__ */ new WeakMap();
+function parseKeyForType(raw, type) {
+  const s = raw.trim();
+  if (!s) return null;
   if (type === "number" || type === "percent") {
-    const an = parseNumericValue(a);
-    const bn = parseNumericValue(b);
+    return parseNumericValue(s);
+  }
+  if (type === "date") {
+    return parseDateTimestamp(s);
+  }
+  if (type === "semver") {
+    return parseSemverTuple(s);
+  }
+  return s;
+}
+function getColumnSortKeys(grid, colIndex, colType) {
+  let byCol = sortKeyCache.get(grid);
+  if (!byCol) {
+    byCol = /* @__PURE__ */ new Map();
+    sortKeyCache.set(grid, byCol);
+  }
+  const existing = byCol.get(colIndex);
+  if (existing && existing.length === grid.rows.length) {
+    return existing;
+  }
+  const keys = new Array(grid.rows.length).fill(null);
+  for (let i = 0; i < grid.rows.length; i++) {
+    const row = grid.rows[i];
+    const idx = row.rowIndex >= 0 && row.rowIndex < grid.rows.length ? row.rowIndex : i;
+    keys[idx] = parseKeyForType(row.cells[colIndex]?.text ?? "", colType);
+  }
+  byCol.set(colIndex, keys);
+  return keys;
+}
+function compareSemverTuples(av, bv) {
+  const len = Math.max(av.length, bv.length);
+  for (let i = 0; i < len; i++) {
+    const diff = (av[i] ?? 0) - (bv[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+function compareParsedKeys(ak, bk, aRaw, bRaw, type) {
+  if (type === "number" || type === "percent" || type === "date") {
+    const an = typeof ak === "number" ? ak : null;
+    const bn = typeof bk === "number" ? bk : null;
     if (an !== null && bn !== null) return an - bn;
     if (an !== null) return -1;
     if (bn !== null) return 1;
-  }
-  if (type === "date") {
-    const ad = parseDateTimestamp(a);
-    const bd = parseDateTimestamp(b);
-    if (ad !== null && bd !== null) return ad - bd;
-    if (ad !== null) return -1;
-    if (bd !== null) return 1;
+    return zhCollator.compare(aRaw.trim(), bRaw.trim());
   }
   if (type === "semver") {
-    const av = parseSemverTuple(a);
-    const bv = parseSemverTuple(b);
+    const av = Array.isArray(ak) ? ak : null;
+    const bv = Array.isArray(bk) ? bk : null;
     if (av && bv) {
-      const len = Math.max(av.length, bv.length);
-      for (let i = 0; i < len; i++) {
-        const diff = (av[i] ?? 0) - (bv[i] ?? 0);
-        if (diff !== 0) return diff;
-      }
-      return zhCollator.compare(a, b);
+      const diff = compareSemverTuples(av, bv);
+      return diff !== 0 ? diff : zhCollator.compare(aRaw.trim(), bRaw.trim());
+    }
+    if (av) return -1;
+    if (bv) return 1;
+    return zhCollator.compare(aRaw.trim(), bRaw.trim());
+  }
+  return zhCollator.compare(aRaw.trim(), bRaw.trim());
+}
+var COMPARE_OP_RE = /^(>=|<=|>|<)\s*(.+)$/;
+var RANGE_EXPR_RE = /^(.+?)\.\.(.+)$/;
+function parseComparableOperand(raw, colType) {
+  const s = raw.trim();
+  if (!s) return null;
+  if (colType === "date") return parseDateTimestamp(s);
+  if (colType === "semver") return parseSemverTuple(s);
+  if (colType === "number" || colType === "percent") return parseNumericValue(s);
+  const dateVal = parseDateTimestamp(s);
+  if (dateVal !== null) return dateVal;
+  return parseNumericValue(s);
+}
+function compareTypedScalar(cellVal, targetVal) {
+  if (typeof cellVal === "number" && typeof targetVal === "number") {
+    return cellVal - targetVal;
+  }
+  if (Array.isArray(cellVal) && Array.isArray(targetVal)) {
+    return compareSemverTuples(cellVal, targetVal);
+  }
+  return null;
+}
+function compileBranch(rawPart, colType) {
+  const part = rawPart.trim();
+  if (!part) return null;
+  const cmpMatch = COMPARE_OP_RE.exec(part);
+  if (cmpMatch) {
+    const op = cmpMatch[1];
+    const target = parseComparableOperand(cmpMatch[2], colType);
+    if (target !== null) {
+      return { kind: "compare", op, target };
     }
   }
-  return zhCollator.compare(a, b);
+  const rangeMatch = RANGE_EXPR_RE.exec(part);
+  if (rangeMatch) {
+    const lo = parseComparableOperand(rangeMatch[1], colType);
+    const hi = parseComparableOperand(rangeMatch[2], colType);
+    if (lo !== null && hi !== null && typeof lo === typeof hi) {
+      return { kind: "range", lo, hi };
+    }
+  }
+  return { kind: "substring", substr: part.toLowerCase() };
+}
+function compileColumnFilter(colIndex, rawExpr, colType) {
+  const trimmed = rawExpr.trim();
+  if (!trimmed) return null;
+  const negate = trimmed.startsWith("!");
+  const body = negate ? trimmed.slice(1).trim() : trimmed;
+  if (!body) return null;
+  const rawBranches = body.split("|");
+  const branches = [];
+  for (const part of rawBranches) {
+    const compiled = compileBranch(part, colType);
+    if (compiled) branches.push(compiled);
+  }
+  if (branches.length === 0) return null;
+  return { colIndex, colType, negate, branches };
+}
+function matchesCompiledBranch(cellRaw, cellLower, branch, colType) {
+  if (branch.kind === "substring") {
+    return cellLower.includes(branch.substr ?? "");
+  }
+  const cellVal = parseComparableOperand(cellRaw, colType);
+  if (cellVal === null) return false;
+  if (branch.kind === "compare" && branch.target !== void 0) {
+    const diff = compareTypedScalar(cellVal, branch.target);
+    if (diff === null) return false;
+    if (branch.op === ">") return diff > 0;
+    if (branch.op === ">=") return diff >= 0;
+    if (branch.op === "<") return diff < 0;
+    if (branch.op === "<=") return diff <= 0;
+    return false;
+  }
+  if (branch.kind === "range" && branch.lo !== void 0 && branch.hi !== void 0) {
+    const dLo = compareTypedScalar(cellVal, branch.lo);
+    const dHi = compareTypedScalar(cellVal, branch.hi);
+    if (dLo === null || dHi === null) return false;
+    return dLo >= 0 && dHi <= 0;
+  }
+  return false;
+}
+function extractHighlightTerms(globalQuery, colFilterExpr) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const add = (term) => {
+    const cleaned = term.trim();
+    const key = cleaned.toLowerCase();
+    if (!cleaned || seen.has(key)) return;
+    seen.add(key);
+    out.push(cleaned);
+  };
+  for (const t2 of globalQuery.trim().split(/\s+/)) {
+    if (t2) add(t2);
+  }
+  if (colFilterExpr) {
+    const trimmed = colFilterExpr.trim();
+    if (trimmed && !trimmed.startsWith("!")) {
+      for (const part of trimmed.split("|")) {
+        const p = part.trim();
+        if (!p || COMPARE_OP_RE.test(p) || RANGE_EXPR_RE.test(p)) continue;
+        add(p);
+      }
+    }
+  }
+  return out;
+}
+function normalizeSortSpecs(sort) {
+  if (!sort) return [];
+  if (Array.isArray(sort)) return sort;
+  return [sort];
 }
 function queryTableRows(grid, query) {
   const globalTerms = query.globalQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const activeColFilters = Object.entries(query.columnFilters).map(([k, v]) => [Number(k), v.trim().toLowerCase()]).filter(([, v]) => Boolean(v));
+  const compiledFilters = [];
+  for (const [k, v] of Object.entries(query.columnFilters)) {
+    const colIdx = Number(k);
+    const colType = grid.columns[colIdx]?.type ?? "text";
+    const compiled = compileColumnFilter(colIdx, v, colType);
+    if (compiled) compiledFilters.push(compiled);
+  }
   let result = grid.rows.filter((row) => {
     if (globalTerms.length > 0) {
-      const joined = row.cells.map((c) => c.text).join(" ").toLowerCase();
+      let blob = row.searchText;
+      if (blob === void 0) {
+        blob = row.cells.map((c) => c.text).join(" ").toLowerCase();
+        row.searchText = blob;
+      }
       for (const term of globalTerms) {
-        if (!joined.includes(term)) return false;
+        if (!blob.includes(term)) return false;
       }
     }
-    for (const [colIdx, filterVal] of activeColFilters) {
-      const cellText = (row.cells[colIdx]?.text ?? "").toLowerCase();
-      if (filterVal.startsWith("!")) {
-        const neg = filterVal.slice(1).trim();
-        if (neg && cellText.includes(neg)) return false;
-      } else if (!cellText.includes(filterVal)) {
-        return false;
+    for (const f of compiledFilters) {
+      const cellRaw = row.cells[f.colIndex]?.text ?? "";
+      const cellLower = cellRaw.toLowerCase();
+      let matchedAny = false;
+      for (const branch of f.branches) {
+        if (matchesCompiledBranch(cellRaw, cellLower, branch, f.colType)) {
+          matchedAny = true;
+          break;
+        }
       }
+      if (f.negate ? matchedAny : !matchedAny) return false;
     }
     return true;
   });
-  if (query.sort && !grid.hasSpans) {
-    const { colIndex, direction } = query.sort;
-    const colType = grid.columns[colIndex]?.type ?? "text";
-    const mult = direction === "asc" ? 1 : -1;
+  const sortSpecs = grid.hasSpans ? [] : normalizeSortSpecs(query.sort);
+  if (sortSpecs.length > 0 && result.length > 1) {
+    const prepared = sortSpecs.map((spec) => {
+      const colType = grid.columns[spec.colIndex]?.type ?? "text";
+      return {
+        colIndex: spec.colIndex,
+        colType,
+        mult: spec.direction === "asc" ? 1 : -1,
+        keys: getColumnSortKeys(grid, spec.colIndex, colType)
+      };
+    });
     result = [...result].sort((ra, rb) => {
-      const av = ra.cells[colIndex]?.text ?? "";
-      const bv = rb.cells[colIndex]?.text ?? "";
-      const aEmpty = !av.trim();
-      const bEmpty = !bv.trim();
-      if (aEmpty && bEmpty) return ra.rowIndex - rb.rowIndex;
-      if (aEmpty) return 1;
-      if (bEmpty) return -1;
-      const cmp = compareCellValues(av, bv, colType);
-      return cmp !== 0 ? cmp * mult : ra.rowIndex - rb.rowIndex;
+      for (const s of prepared) {
+        const av = ra.cells[s.colIndex]?.text ?? "";
+        const bv = rb.cells[s.colIndex]?.text ?? "";
+        const aEmpty = !av.trim();
+        const bEmpty = !bv.trim();
+        if (aEmpty && bEmpty) continue;
+        if (aEmpty) return 1;
+        if (bEmpty) return -1;
+        const ak = s.keys[ra.rowIndex] !== void 0 ? s.keys[ra.rowIndex] : parseKeyForType(av, s.colType);
+        const bk = s.keys[rb.rowIndex] !== void 0 ? s.keys[rb.rowIndex] : parseKeyForType(bv, s.colType);
+        const cmp = compareParsedKeys(ak, bk, av, bv, s.colType);
+        if (cmp !== 0) return cmp * s.mult;
+      }
+      return ra.rowIndex - rb.rowIndex;
     });
   }
   return result;
+}
+function computeColumnSummaries(grid, rows, visibleColIndexes) {
+  const colSet = visibleColIndexes ? new Set(visibleColIndexes) : null;
+  const out = [];
+  for (const col of grid.columns) {
+    if (colSet && !colSet.has(col.index)) continue;
+    if (col.type !== "number" && col.type !== "percent") continue;
+    let count = 0;
+    let sum = 0;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const row of rows) {
+      const raw = row.cells[col.index]?.text ?? "";
+      if (!raw.trim()) continue;
+      const val = parseNumericValue(raw);
+      if (val === null) continue;
+      count++;
+      sum += val;
+      if (val < min) min = val;
+      if (val > max) max = val;
+    }
+    if (count === 0) continue;
+    out.push({
+      colIndex: col.index,
+      label: col.label,
+      type: col.type,
+      count,
+      sum,
+      avg: sum / count,
+      min,
+      max
+    });
+  }
+  return out;
+}
+function formatSummaryValue(value, type) {
+  if (!Number.isFinite(value)) return "\u2014";
+  const abs = Math.abs(value);
+  const maxFrac = abs >= 1e3 ? 1 : abs >= 1 ? 2 : 3;
+  const formatted = new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: maxFrac
+  }).format(value);
+  return type === "percent" ? `${formatted}%` : formatted;
 }
 
 // src/table/table-virtual.ts
@@ -2103,6 +2433,60 @@ function computeVirtualRange(totalRows, scrollTop, viewportHeight, rowHeight = V
 }
 
 // src/table/table-modal.ts
+var MAX_SESSION_ENTRIES = 40;
+var tableSessionCache = /* @__PURE__ */ new Map();
+function getSessionState(key) {
+  const hit = tableSessionCache.get(key);
+  if (!hit) return void 0;
+  tableSessionCache.delete(key);
+  tableSessionCache.set(key, hit);
+  return hit;
+}
+function setSessionState(key, state) {
+  tableSessionCache.delete(key);
+  tableSessionCache.set(key, state);
+  if (tableSessionCache.size > MAX_SESSION_ENTRIES) {
+    const oldest = tableSessionCache.keys().next().value;
+    if (oldest !== void 0) tableSessionCache.delete(oldest);
+  }
+}
+function escapeRegExp2(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function renderHighlightedText(doc, target, text, terms) {
+  if (!text || terms.length === 0) {
+    target.textContent = text;
+    return;
+  }
+  const sorted = [...terms].sort((a, b) => b.length - a.length);
+  const re = new RegExp(`(${sorted.map(escapeRegExp2).join("|")})`, "gi");
+  let lastIndex = 0;
+  let match;
+  let hasHit = false;
+  target.textContent = "";
+  while ((match = re.exec(text)) !== null) {
+    if (match[0].length === 0) {
+      re.lastIndex++;
+      continue;
+    }
+    hasHit = true;
+    if (match.index > lastIndex) {
+      target.appendChild(doc.createTextNode(text.slice(lastIndex, match.index)));
+    }
+    const mark = doc.createElement("mark");
+    mark.className = "qs-wb-hl";
+    mark.textContent = match[0];
+    target.appendChild(mark);
+    lastIndex = match.index + match[0].length;
+  }
+  if (!hasHit) {
+    target.textContent = text;
+    return;
+  }
+  if (lastIndex < text.length) {
+    target.appendChild(doc.createTextNode(text.slice(lastIndex)));
+  }
+}
 function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", legacyOnClose) {
   const opts = typeof titleOrOptions === "string" ? { title: titleOrOptions, onClose: legacyOnClose } : titleOrOptions;
   const title = opts.title || "Table";
@@ -2112,15 +2496,35 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
   const win = doc.defaultView || window;
   const prevFocused = doc.activeElement;
   const grid = extractTableGrid(sourceTable);
+  const sessionKey = `${opts.sourcePath || title}::${grid.columns.map((c) => c.label).join("")}`;
+  const saved = getSessionState(sessionKey);
+  const isNarrowViewport = (win.innerWidth || 1024) <= 760;
   let globalQuery = "";
   const columnFilters = {};
-  let sortSpec = null;
-  const visibleCols = new Set(grid.columns.map((c) => c.index));
-  const colWidths = /* @__PURE__ */ new Map();
-  let freezeFirst = settings.defaultFreezeFirstCol;
+  let sortSpecs = [];
+  const validColIndexes = new Set(grid.columns.map((c) => c.index));
+  const restoredVisible = saved?.visibleCols.filter((idx) => validColIndexes.has(idx)) ?? [];
+  const visibleCols = new Set(
+    restoredVisible.length > 0 ? restoredVisible : grid.columns.map((c) => c.index)
+  );
+  const colWidths = new Map(
+    (saved?.colWidths ?? []).filter(([idx, w]) => validColIndexes.has(idx) && w >= 64 && w <= 600)
+  );
+  let freezeFirst = saved ? saved.freezeFirst : settings.defaultFreezeFirstCol;
+  let drawerOpen = saved ? saved.drawerOpen : !isNarrowViewport;
+  let showSummary = saved ? saved.showSummary : true;
   let showColFilterRow = false;
   let selectedFilteredIdx = 0;
   let filteredRows = grid.rows;
+  const persistSession = () => {
+    setSessionState(sessionKey, {
+      visibleCols: Array.from(visibleCols),
+      colWidths: Array.from(colWidths.entries()),
+      freezeFirst,
+      drawerOpen,
+      showSummary
+    });
+  };
   const overlay = doc.createElement("div");
   overlay.className = "qs-wb-overlay qs-wb-table-overlay";
   overlay.setAttribute("role", "dialog");
@@ -2147,7 +2551,7 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
   const btnColFilter = createIconButton(
     doc,
     "filter",
-    t("\u5F00\u542F/\u9690\u85CF\u5217\u7EA7\u7B5B\u9009\u884C", "Toggle per-column filter row"),
+    t("\u5F00\u542F/\u9690\u85CF\u5217\u7EA7\u7B5B\u9009\u884C\uFF08\u652F\u6301 >100\u300110..50\u3001a|b\u3001!\u6392\u9664\uFF09", "Toggle column filters (>100, 10..50, a|b, !exclude)"),
     t("\u5217\u7B5B\u9009", "Column filter")
   );
   const btnClear = createIconButton(doc, "eraser", t("\u6E05\u7A7A\u7B5B\u9009\u4E0E\u6392\u5E8F", "Reset filters & sort"), t("\u91CD\u7F6E", "Reset"));
@@ -2155,13 +2559,15 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
   const btnFreeze = createIconButton(doc, "pin", t("\u51BB\u7ED3\u9996\u5217", "Freeze first column"), t("\u51BB\u9996\u5217", "Freeze 1st"));
   btnFreeze.classList.toggle("is-active", freezeFirst);
   const btnCols = createIconButton(doc, "columns", t("\u663E\u793A/\u9690\u85CF\u5217", "Toggle columns"), t("\u5217\u663E\u9690", "Columns"));
+  const btnSummary = createIconButton(doc, "bar-chart-2", t("\u663E\u793A/\u9690\u85CF\u6570\u503C\u7EDF\u8BA1\u6C47\u603B\u680F", "Toggle numeric summary bar"), t("\u7EDF\u8BA1", "Summary"));
+  btnSummary.classList.toggle("is-active", showSummary);
   const btnDrawer = createIconButton(doc, "panel-right", t("\u5F00\u5173\u5355\u884C\u7AD6\u6392\u8BE6\u60C5\u62BD\u5C49", "Toggle row detail drawer"), t("\u884C\u8BE6\u60C5", "Details"));
-  btnDrawer.classList.add("is-active");
+  btnDrawer.classList.toggle("is-active", drawerOpen);
   const btnTsv = createIconButton(doc, "copy", t("\u590D\u5236 TSV\uFF08\u76F4\u8D34 Excel/\u9489\u9489/\u98DE\u4E66\uFF09", "Copy TSV (Excel/Sheet ready)"), "TSV");
   const btnCsv = createIconButton(doc, "download", t("\u4E0B\u8F7D UTF-8 BOM CSV", "Download UTF-8 BOM CSV"), "CSV");
   const btnMd = createIconButton(doc, "file-text", t("\u590D\u5236 Markdown \u7B5B\u9009\u5B50\u8868", "Copy filtered Markdown table"), "MD");
   const btnClose = createIconButton(doc, "x", t("\u5173\u95ED (Esc)", "Close (Esc)"));
-  rightGroup.append(btnFreeze, btnCols, btnDrawer, btnTsv, btnCsv, btnMd, btnClose);
+  rightGroup.append(btnFreeze, btnCols, btnSummary, btnDrawer, btnTsv, btnCsv, btnMd, btnClose);
   const colMenu = doc.createElement("div");
   colMenu.className = "qs-wb-col-menu";
   modal.appendChild(colMenu);
@@ -2174,12 +2580,14 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
   const tableEl = doc.createElement("table");
   tableEl.className = "qs-wb-grid-table";
   if (freezeFirst) tableEl.classList.add("is-freeze-first");
+  const colgroupEl = doc.createElement("colgroup");
   const theadEl = doc.createElement("thead");
   const tbodyEl = doc.createElement("tbody");
-  tableEl.append(theadEl, tbodyEl);
+  tableEl.append(colgroupEl, theadEl, tbodyEl);
   gridWrap.appendChild(tableEl);
   const drawer = doc.createElement("aside");
   drawer.className = "qs-wb-drawer";
+  drawer.classList.toggle("is-closed", !drawerOpen);
   const drawerHead = doc.createElement("div");
   drawerHead.className = "qs-wb-drawer-head";
   const drawerTitle = doc.createElement("span");
@@ -2190,16 +2598,53 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
   drawerList.className = "qs-wb-drawer-list";
   drawer.append(drawerHead, drawerList);
   body.appendChild(drawer);
+  const summaryBar = doc.createElement("div");
+  summaryBar.className = "qs-wb-summary-bar is-hidden";
+  modal.appendChild(summaryBar);
   const footer = doc.createElement("div");
   footer.className = "qs-wb-footer";
   const footerLeft = doc.createElement("span");
-  footerLeft.textContent = grid.hasSpans ? t(`${title} \xB7 \u68C0\u6D4B\u5230\u5408\u5E76\u5355\u5143\u683C\uFF0C\u5DF2\u542F\u7528\u53EA\u8BFB\u4FDD\u62A4\uFF08\u7981\u7528\u6392\u5E8F\uFF09`, `${title} \xB7 Merged cells detected; sorting disabled for safety`) : `${title} \xB7 ${t("\u70B9\u51FB\u8868\u5934\u667A\u80FD\u6392\u5E8F \xB7 \u62D6\u62FD\u8868\u5934\u53F3\u7F18\u8C03\u5BBD \xB7 \u539F\u59CB\u7B14\u8BB0\u96F6\u6539\u52A8", "Click headers to sort \xB7 Drag edges to resize \xB7 Source note untouched")}`;
+  footerLeft.textContent = grid.hasSpans ? t(`${title} \xB7 \u68C0\u6D4B\u5230\u5408\u5E76\u5355\u5143\u683C\uFF0C\u5DF2\u542F\u7528\u53EA\u8BFB\u4FDD\u62A4\uFF08\u7981\u7528\u6392\u5E8F\uFF09`, `${title} \xB7 Merged cells detected; sorting disabled for safety`) : `${title} \xB7 ${t("\u70B9\u51FB\u8868\u5934\u6392\u5E8F \xB7 Shift+\u70B9\u51FB\u591A\u5217\u6392\u5E8F \xB7 \u53CC\u51FB\u5355\u5143\u683C\u590D\u5236", "Click header to sort \xB7 Shift+click multi-sort \xB7 Double-click cell to copy")}`;
   const footerRight = doc.createElement("span");
   footerRight.textContent = t("\u2191/\u2193 \u5207\u6362\u884C \xB7 \u2318F \u68C0\u7D22 \xB7 Esc \u5173\u95ED", "\u2191/\u2193 rows \xB7 \u2318F search \xB7 Esc close");
   footer.append(footerLeft, footerRight);
   modal.appendChild(footer);
   doc.body.appendChild(overlay);
   const getActiveCols = () => grid.columns.filter((c) => visibleCols.has(c.index));
+  const getVisibleIds = () => getActiveCols().map((c) => c.index);
+  const renderSummaryBar = () => {
+    const summaries = computeColumnSummaries(grid, filteredRows, getVisibleIds());
+    if (!showSummary || summaries.length === 0) {
+      summaryBar.classList.add("is-hidden");
+      summaryBar.textContent = "";
+      return;
+    }
+    summaryBar.classList.remove("is-hidden");
+    summaryBar.textContent = "";
+    for (const s of summaries) {
+      const chip = doc.createElement("button");
+      chip.type = "button";
+      chip.className = "qs-wb-summary-chip";
+      const sumTxt = formatSummaryValue(s.sum, s.type);
+      const avgTxt = formatSummaryValue(s.avg, s.type);
+      const minTxt = formatSummaryValue(s.min, s.type);
+      const maxTxt = formatSummaryValue(s.max, s.type);
+      const labelText = s.type === "percent" ? `${s.label}: ${t("\u5747\u503C", "avg")} ${avgTxt} \xB7 ${minTxt}~${maxTxt} (n=${s.count})` : `${s.label}: ${t("\u5408\u8BA1", "sum")} ${sumTxt} \xB7 ${t("\u5747\u503C", "avg")} ${avgTxt} \xB7 ${minTxt}~${maxTxt}`;
+      chip.textContent = labelText;
+      chip.title = t("\u70B9\u51FB\u590D\u5236\u8BE5\u5217\u6C47\u603B\u7EDF\u8BA1", "Click to copy column summary");
+      chip.addEventListener("click", () => {
+        void (async () => {
+          try {
+            await (win.navigator?.clipboard || navigator.clipboard).writeText(labelText);
+            new import_obsidian8.Notice(t(`\u5DF2\u590D\u5236\u300C${s.label}\u300D\u7EDF\u8BA1\u6C47\u603B`, `Copied summary for "${s.label}"`));
+          } catch {
+            new import_obsidian8.Notice(t("\u590D\u5236\u7EDF\u8BA1\u5931\u8D25", "Failed to copy summary"));
+          }
+        })();
+      });
+      summaryBar.appendChild(chip);
+    }
+  };
   const renderDrawer = (row) => {
     drawerList.empty?.();
     if (!drawerList.empty) drawerList.textContent = "";
@@ -2274,7 +2719,8 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
     const useVirtual = filteredRows.length >= settings.virtualScrollThreshold;
     const vpH = gridWrap.clientHeight || 480;
     const range = useVirtual ? computeVirtualRange(filteredRows.length, gridWrap.scrollTop, vpH, VIRTUAL_ROW_HEIGHT) : { start: 0, end: filteredRows.length, topSpacerHeight: 0, bottomSpacerHeight: 0 };
-    const rangeKey = `${range.start}:${range.end}:${activeCols.map((c) => c.index).join(",")}:${filteredRows.length}`;
+    const hlSig = `${globalQuery.trim()}|${activeCols.map((c) => columnFilters[c.index] ?? "").join("")}`;
+    const rangeKey = `${range.start}:${range.end}:${activeCols.map((c) => c.index).join(",")}:${filteredRows.length}:${hlSig}`;
     if (!force && rangeKey === lastRenderedRange) {
       syncSelectedRowHighlight();
       return;
@@ -2290,6 +2736,7 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
       trTop.appendChild(tdTop);
       tbodyEl.appendChild(trTop);
     }
+    const colHlTerms = activeCols.map((c) => extractHighlightTerms(globalQuery, columnFilters[c.index]));
     const frag = doc.createDocumentFragment();
     for (let i = range.start; i < range.end; i++) {
       const row = filteredRows[i];
@@ -2297,10 +2744,17 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
       tr.className = "qs-wb-data-row";
       if (i === selectedFilteredIdx) tr.classList.add("is-selected");
       tr.dataset.fidx = String(i);
-      for (const col of activeCols) {
+      for (let pos = 0; pos < activeCols.length; pos++) {
+        const col = activeCols[pos];
         const td = doc.createElement("td");
+        td.dataset.colIdx = String(col.index);
         const cell = row.cells[col.index] ?? { text: "", links: [] };
-        td.textContent = cell.text;
+        const terms = colHlTerms[pos];
+        if (terms.length > 0) {
+          renderHighlightedText(doc, td, cell.text, terms);
+        } else {
+          td.textContent = cell.text;
+        }
         td.title = cell.text;
         const w = colWidths.get(col.index);
         if (w) {
@@ -2324,14 +2778,63 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
     }
   };
   let resizeCleanup = null;
+  let resizeRafId = null;
+  const colEls = /* @__PURE__ */ new Map();
+  const applyLiveColumnWidth = (colIndex, visiblePos, th, nextW) => {
+    const px = `${nextW}px`;
+    const colEl = colEls.get(colIndex);
+    if (colEl) colEl.style.width = px;
+    th.style.width = px;
+    th.style.minWidth = px;
+    th.style.maxWidth = px;
+    const rows = tbodyEl.querySelectorAll("tr.qs-wb-data-row");
+    for (const tr of Array.from(rows)) {
+      const td = tr.children[visiblePos];
+      if (!td) continue;
+      td.style.width = px;
+      td.style.minWidth = px;
+      td.style.maxWidth = px;
+    }
+  };
+  let filterTimer = null;
+  let lastFilterTs = 0;
+  let isComposing = false;
+  const cancelPendingFilter = () => {
+    if (filterTimer !== null) {
+      win.clearTimeout(filterTimer);
+      filterTimer = null;
+    }
+  };
+  const scheduleFilterRefresh = (forceImmediate = false) => {
+    const now = performance.now();
+    const isCleared = !globalQuery.trim() && Object.values(columnFilters).every((v) => !v.trim());
+    if (forceImmediate || isCleared || grid.rows.length <= 500 || now - lastFilterTs >= 65) {
+      cancelPendingFilter();
+      lastFilterTs = now;
+      refreshData(false);
+      return;
+    }
+    cancelPendingFilter();
+    filterTimer = win.setTimeout(() => {
+      filterTimer = null;
+      lastFilterTs = performance.now();
+      refreshData(false);
+    }, 65);
+  };
   const renderHeader = () => {
     const activeCols = getActiveCols();
+    colgroupEl.textContent = "";
+    colEls.clear();
     theadEl.textContent = "";
     const headTr = doc.createElement("tr");
-    for (const col of activeCols) {
+    activeCols.forEach((col, visiblePos) => {
+      const colEl = doc.createElement("col");
+      const w = colWidths.get(col.index);
+      if (w) colEl.style.width = `${w}px`;
+      colgroupEl.appendChild(colEl);
+      colEls.set(col.index, colEl);
       const th = doc.createElement("th");
       th.className = "qs-wb-th";
-      const w = colWidths.get(col.index);
       if (w) {
         th.style.width = `${w}px`;
         th.style.minWidth = `${w}px`;
@@ -2344,21 +2847,34 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
       labelSpan.textContent = col.label;
       const sortSpan = doc.createElement("span");
       sortSpan.className = "qs-wb-sort-ind";
-      if (sortSpec && sortSpec.colIndex === col.index) {
-        sortSpan.textContent = sortSpec.direction === "asc" ? "\u25B2" : "\u25BC";
+      const sortIdx = sortSpecs.findIndex((s) => s.colIndex === col.index);
+      if (sortIdx >= 0) {
+        const arrow = sortSpecs[sortIdx].direction === "asc" ? "\u25B2" : "\u25BC";
+        sortSpan.textContent = sortSpecs.length > 1 ? `${sortIdx + 1}${arrow}` : arrow;
       }
       inner.append(labelSpan, sortSpan);
       th.appendChild(inner);
       if (!grid.hasSpans) {
         th.addEventListener("click", (evt) => {
           if (evt.target?.classList?.contains("qs-wb-col-resizer")) return;
-          if (sortSpec && sortSpec.colIndex === col.index) {
-            if (sortSpec.direction === "asc") sortSpec = { colIndex: col.index, direction: "desc" };
-            else sortSpec = null;
+          const existingIdx = sortSpecs.findIndex((s) => s.colIndex === col.index);
+          if (evt.shiftKey) {
+            if (existingIdx >= 0) {
+              if (sortSpecs[existingIdx].direction === "asc") {
+                sortSpecs = sortSpecs.map((s, i) => i === existingIdx ? { ...s, direction: "desc" } : s);
+              } else {
+                sortSpecs = sortSpecs.filter((_, i) => i !== existingIdx);
+              }
+            } else {
+              sortSpecs = [...sortSpecs, { colIndex: col.index, direction: "asc" }];
+            }
+          } else if (existingIdx >= 0 && sortSpecs.length === 1) {
+            if (sortSpecs[0].direction === "asc") sortSpecs = [{ colIndex: col.index, direction: "desc" }];
+            else sortSpecs = [];
           } else {
-            sortSpec = { colIndex: col.index, direction: "asc" };
+            sortSpecs = [{ colIndex: col.index, direction: "asc" }];
           }
-          refreshData();
+          refreshData(true);
         });
       }
       const resizer = doc.createElement("span");
@@ -2368,6 +2884,7 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
         evt.preventDefault();
         evt.stopPropagation();
         colWidths.delete(col.index);
+        persistSession();
         renderHeader();
         renderBodyRows(true);
       });
@@ -2377,15 +2894,24 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
         resizeCleanup?.();
         const startX = evt.clientX;
         const startW = th.getBoundingClientRect().width || 120;
+        let pendingW = Math.round(startW);
         const onMove = (mEvt) => {
-          const nextW = Math.max(64, Math.min(600, Math.round(startW + (mEvt.clientX - startX))));
-          colWidths.set(col.index, nextW);
-          th.style.width = `${nextW}px`;
-          th.style.minWidth = `${nextW}px`;
-          th.style.maxWidth = `${nextW}px`;
-          renderBodyRows(true);
+          pendingW = Math.max(64, Math.min(600, Math.round(startW + (mEvt.clientX - startX))));
+          colWidths.set(col.index, pendingW);
+          if (resizeRafId === null) {
+            resizeRafId = win.requestAnimationFrame(() => {
+              resizeRafId = null;
+              applyLiveColumnWidth(col.index, visiblePos, th, pendingW);
+            });
+          }
         };
         const onUp = () => {
+          if (resizeRafId !== null) {
+            win.cancelAnimationFrame(resizeRafId);
+            resizeRafId = null;
+            applyLiveColumnWidth(col.index, visiblePos, th, pendingW);
+          }
+          persistSession();
           win.removeEventListener("pointermove", onMove);
           win.removeEventListener("pointerup", onUp);
           win.removeEventListener("pointercancel", onUp);
@@ -2400,7 +2926,7 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
       });
       th.appendChild(resizer);
       headTr.appendChild(th);
-    }
+    });
     theadEl.appendChild(headTr);
     if (showColFilterRow) {
       const measuredHeadH = Math.max(30, Math.ceil(headTr.getBoundingClientRect().height || 34));
@@ -2412,16 +2938,26 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
         const inp = doc.createElement("input");
         inp.type = "search";
         inp.className = "qs-wb-col-filter-input";
-        inp.placeholder = t("\u7B5B\u9009 (!\u6392\u9664)", "Filter (!exclude)");
+        inp.placeholder = t(">100 / 1..9 / a|b / !\u6392\u9664", ">100 / 1..9 / a|b / !excl");
         inp.value = columnFilters[col.index] ?? "";
+        inp.addEventListener("compositionstart", () => {
+          isComposing = true;
+        });
+        inp.addEventListener("compositionend", () => {
+          isComposing = false;
+          columnFilters[col.index] = inp.value;
+          scheduleFilterRefresh(true);
+        });
         inp.addEventListener("input", () => {
           columnFilters[col.index] = inp.value;
-          refreshData(false);
+          if (!isComposing) scheduleFilterRefresh();
         });
         th.appendChild(inp);
         filterTr.appendChild(th);
       }
       theadEl.appendChild(filterTr);
+    } else {
+      tableEl.style.removeProperty("--qs-wb-head-h");
     }
   };
   const renderColMenu = () => {
@@ -2439,9 +2975,11 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
           cb.checked = true;
           return;
         }
+        persistSession();
         renderHeader();
         renderBodyRows(true);
         updateStats();
+        renderSummaryBar();
       });
       const span = doc.createElement("span");
       span.textContent = col.label;
@@ -2457,10 +2995,11 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
     );
   };
   const refreshData = (rebuildHeader = true) => {
+    cancelPendingFilter();
     filteredRows = queryTableRows(grid, {
       globalQuery,
       columnFilters,
-      sort: sortSpec
+      sort: sortSpecs.length > 0 ? sortSpecs : null
     });
     if (selectedFilteredIdx >= filteredRows.length) {
       selectedFilteredIdx = Math.max(0, filteredRows.length - 1);
@@ -2470,10 +3009,19 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
     updateStats();
     renderBodyRows(true);
     renderDrawer(filteredRows[selectedFilteredIdx]);
+    renderSummaryBar();
   };
+  searchInput.addEventListener("compositionstart", () => {
+    isComposing = true;
+  });
+  searchInput.addEventListener("compositionend", () => {
+    isComposing = false;
+    globalQuery = searchInput.value;
+    scheduleFilterRefresh(true);
+  });
   searchInput.addEventListener("input", () => {
     globalQuery = searchInput.value;
-    refreshData(false);
+    if (!isComposing) scheduleFilterRefresh();
   });
   btnColFilter.addEventListener("click", () => {
     showColFilterRow = !showColFilterRow;
@@ -2484,22 +3032,31 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
     globalQuery = "";
     searchInput.value = "";
     for (const k of Object.keys(columnFilters)) delete columnFilters[Number(k)];
-    sortSpec = null;
+    sortSpecs = [];
     refreshData(true);
   });
   btnFreeze.addEventListener("click", () => {
     freezeFirst = !freezeFirst;
     btnFreeze.classList.toggle("is-active", freezeFirst);
     tableEl.classList.toggle("is-freeze-first", freezeFirst);
+    persistSession();
+  });
+  btnSummary.addEventListener("click", () => {
+    showSummary = !showSummary;
+    btnSummary.classList.toggle("is-active", showSummary);
+    renderSummaryBar();
+    persistSession();
   });
   btnCols.addEventListener("click", (evt) => {
     evt.stopPropagation();
     colMenu.classList.toggle("is-open");
   });
   const toggleDrawer = (open) => {
-    const next = open === void 0 ? drawer.classList.contains("is-closed") : open;
+    const next = open === void 0 ? !drawerOpen : open;
+    drawerOpen = next;
     drawer.classList.toggle("is-closed", !next);
     btnDrawer.classList.toggle("is-active", next);
+    persistSession();
   };
   btnDrawer.addEventListener("click", () => toggleDrawer());
   drawerCloseBtn.addEventListener("click", () => toggleDrawer(false));
@@ -2511,12 +3068,27 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
     syncSelectedRowHighlight();
     renderDrawer(filteredRows[selectedFilteredIdx]);
   });
+  tbodyEl.addEventListener("dblclick", (evt) => {
+    const td = evt.target?.closest("td") ?? null;
+    const tr = td?.closest("tr.qs-wb-data-row") ?? null;
+    if (!td || !tr || tr.dataset.fidx === void 0 || td.dataset.colIdx === void 0) return;
+    const row = filteredRows[Number(tr.dataset.fidx)];
+    const colIdx = Number(td.dataset.colIdx);
+    const text = row?.cells[colIdx]?.text ?? "";
+    void (async () => {
+      try {
+        await (win.navigator?.clipboard || navigator.clipboard).writeText(text);
+        new import_obsidian8.Notice(t("\u5DF2\u590D\u5236\u5355\u5143\u683C\u5185\u5BB9", "Copied cell value"));
+      } catch {
+        new import_obsidian8.Notice(t("\u590D\u5236\u5931\u8D25", "Copy failed"));
+      }
+    })();
+  });
   const onScroll = () => {
     renderBodyRows(false);
   };
   gridWrap.addEventListener("scroll", onScroll, { passive: true });
   const safeSlug = title.replace(/[^\w\u4e00-\u9fff-]+/g, "-").replace(/^-+|-+$/g, "") || "table";
-  const getVisibleIds = () => getActiveCols().map((c) => c.index);
   btnTsv.addEventListener("click", () => {
     void (async () => {
       try {
@@ -2601,6 +3173,11 @@ function openTableWorkbench(sourceTable, settings, titleOrOptions = "Table", leg
   const close = () => {
     if (closed) return;
     closed = true;
+    cancelPendingFilter();
+    if (resizeRafId !== null) {
+      win.cancelAnimationFrame(resizeRafId);
+      resizeRafId = null;
+    }
     resizeCleanup?.();
     gridWrap.removeEventListener("scroll", onScroll);
     win.removeEventListener("keydown", onKeyDown, true);
@@ -2748,6 +3325,7 @@ var QingShanWorkbenchPlugin = class extends import_obsidian9.Plugin {
     this.closeActiveModalInDoc(doc);
     const handle = openTableWorkbench(table, this.settings, {
       title,
+      sourcePath,
       onClose: () => {
         if (this.activeModals.get(doc) === handle) this.activeModals.delete(doc);
       },

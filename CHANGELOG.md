@@ -4,6 +4,31 @@ All notable changes to **Qing Shan Workbench (青山 · 图表与宽表工作台
 
 ---
 
+## [1.1.0] - 2026-11-26
+
+### Added
+- **Wide-Table Analytics & Multi-Sort**:
+  - Upgraded per-column filter expressions to support numeric/date/semver comparisons (`>1000`, `<=500ms`, `>=2026-03-01`, `>=v1.0.0`), inclusive ranges (`50ms..1.5s`, `2026-01-01..2026-06-30`), multi-branch OR (`Billing|Analytics`), and negated OR (`!Alert|Pending`).
+  - Added `Shift + Click` multi-column sorting with priority indicators (`1▲`, `2▼`).
+  - Added a collapsible **Numeric Summary Bar** above the table footer showing live `Sum / Avg / Min / Max` statistics for filtered numeric and percentage columns (click any chip to copy).
+  - Added XSS-safe `<mark>` search highlighting inside visible table cells and double-click-to-copy on individual cells.
+  - Added bounded in-memory session state persistence (per note path + table header signature) so reopening a table restores column visibility, column widths, freeze state, drawer toggle, and summary bar preference without writing to `data.json`.
+- **Mermaid UX & Export Enhancements**:
+  - Upgraded wheel zoom to continuous exponential scaling for smooth macOS trackpad pinch and responsive mouse wheel zooming.
+  - Added double-click on the Mermaid stage to toggle smoothly between Fit-to-View and 1:1 centered at the click point.
+  - Synced the Minimap background and adapted SVG clone automatically when switching canvas backgrounds (`Theme` / `White` / `Transparent`).
+  - Added an actionable one-click **Export SVG** fallback button inside the Notice if PNG canvas rasterization is ever restricted.
+
+### Improved
+- **Table Engine & Drag-Resize Performance**:
+  - Precomputed row search text and introduced a WeakMap-cached Schwartzian Transform sort key index to eliminate repeated $O(N \log N)$ parsing on large tables.
+  - Added leading-edge + trailing coalesced filtering and Chinese IME (`compositionstart`/`compositionend`) guards for jank-free typing on 10,000-row tables.
+  - Replaced full `tbody` teardown during column drag-resizing with `requestAnimationFrame`-scheduled `<colgroup><col>` + live column width updates (zero DOM row rebuilds).
+  - Added responsive narrow-screen/mobile overlay drawer (`<= 760px`, closed by default, slides over cleanly on row click) and `ResizeObserver` height tracking + row text caching for inline frozen tables.
+- **Export Hardening**:
+  - Neutralized spreadsheet formula injection (`=`, `@`, `+cmd`, `-cmd`) in CSV/TSV exports while leaving numeric negatives/positives (`-120`, `+5.2%`) and phone numbers untouched.
+  - Used `Blob` + `URL.createObjectURL` for pure-SVG PNG decoding (lower peak memory on large diagrams) while retaining untainted data-URI rendering for `<foreignObject>` Mermaid diagrams.
+
 ## [1.0.2] - 2026-11-25
 
 ### Fixed

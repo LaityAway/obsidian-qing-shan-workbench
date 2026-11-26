@@ -448,6 +448,49 @@ export function buildStandaloneSvgString(
   return { svgString: serialized, width: totalW, height: totalH };
 }
 
+function loadImageFromSrc(src: string): Promise<HTMLImageElement> {
+  return new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new Image();
+    image.decoding = 'async';
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error('Failed to decode SVG for PNG rendering'));
+    image.src = src;
+  });
+}
+
+async function rasterizeSvgImageToBlob(
+  doc: Document,
+  img: HTMLImageElement,
+  width: number,
+  height: number,
+  scale: number,
+  bgColor: string | null,
+): Promise<Blob> {
+  const canvas = doc.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context unavailable');
+
+  if (bgColor) {
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+  ctx.scale(scale, scale);
+  ctx.drawImage(img, 0, 0, width, height);
+
+  return new Promise<Blob>((resolve, reject) => {
+    try {
+      canvas.toBlob(result => {
+        if (result) resolve(result);
+        else reject(new Error('Canvas toBlob returned null'));
+      }, 'image/png');
+    } catch (err) {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
 export async function renderSvgToPngBlob(
   sourceSvg: SVGSVGElement,
   bgMode: ExportBgMode,
@@ -456,36 +499,28 @@ export async function renderSvgToPngBlob(
   const doc = sourceSvg.ownerDocument;
   const { svgString, width, height } = buildStandaloneSvgString(sourceSvg, bgMode);
   const { scale, clamped } = computeSafeExportScale(width, height, requestedScale);
+  const bgColor = resolveExportBackground(doc, bgMode);
+
+  // Chromium/Electron taints canvases when drawing blob:-URL SVGs that contain <foreignObject>.
+  // Use Blob URL for pure-SVG diagrams (lower peak memory) with automatic data-URI fallback.
+  const hasForeignObject = /<foreignObject\b/i.test(svgString);
+  if (!hasForeignObject && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const objUrl = URL.createObjectURL(svgBlob);
+    try {
+      const img = await loadImageFromSrc(objUrl);
+      const blob = await rasterizeSvgImageToBlob(doc, img, width, height, scale, bgColor);
+      return { blob, scale, clamped };
+    } catch {
+      // Fall through to data-URI decode & rasterize
+    } finally {
+      URL.revokeObjectURL(objUrl);
+    }
+  }
 
   const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgString)}`;
-  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-    const image = new Image();
-    image.decoding = 'async';
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Failed to decode SVG for PNG rendering'));
-    image.src = dataUrl;
-  });
-
-  const canvas = doc.createElement('canvas');
-  canvas.width = Math.max(1, Math.round(width * scale));
-  canvas.height = Math.max(1, Math.round(height * scale));
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Canvas 2D context unavailable');
-
-  const bgColor = resolveExportBackground(doc, bgMode);
-  if (bgColor) {
-    ctx.fillStyle = bgColor;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }
-  ctx.scale(scale, scale);
-  ctx.drawImage(img, 0, 0, width, height);
-
-  const blob = await new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(result => {
-      if (result) resolve(result);
-      else reject(new Error('Canvas toBlob returned null'));
-    }, 'image/png');
-  });
+  const img = await loadImageFromSrc(dataUrl);
+  const blob = await rasterizeSvgImageToBlob(doc, img, width, height, scale, bgColor);
   return { blob, scale, clamped };
 }
 

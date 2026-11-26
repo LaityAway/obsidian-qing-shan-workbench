@@ -1,15 +1,29 @@
 import { TableColumn, TableRowData } from './table-model';
 
-function escapeTsvCell(raw: string): string {
-  const s = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+// Neutralize spreadsheet formula injection (=SUM, @SUM, +cmd, -cmd) while keeping
+// legitimate numeric negatives/positives (-120, +5.2%) untouched.
+const FORMULA_PREFIX_RE = /^(?:[=@\t\r]|[+-](?=[A-Za-z_@(=]))/;
+
+export function sanitizeSpreadsheetCell(raw: string): string {
+  const trimmedStart = raw.replace(/^ +/, '');
+  if (FORMULA_PREFIX_RE.test(trimmedStart)) {
+    return `'${raw}`;
+  }
+  return raw;
+}
+
+function escapeTsvCell(raw: string, sanitizeFormulas: boolean): string {
+  let s = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (sanitizeFormulas) s = sanitizeSpreadsheetCell(s);
   if (/[\t\n"]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
   return s;
 }
 
-function escapeCsvCell(raw: string): string {
-  const s = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+function escapeCsvCell(raw: string, sanitizeFormulas: boolean): string {
+  let s = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  if (sanitizeFormulas) s = sanitizeSpreadsheetCell(s);
   if (/[",\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }
@@ -28,11 +42,12 @@ export function serializeToTsv(
   columns: readonly TableColumn[],
   rows: readonly TableRowData[],
   visibleColIndexes?: readonly number[],
+  sanitizeFormulas = true,
 ): string {
   const colIds = visibleColIndexes ?? columns.map(c => c.index);
-  const headerLine = colIds.map(i => escapeTsvCell(columns[i]?.label ?? '')).join('\t');
+  const headerLine = colIds.map(i => escapeTsvCell(columns[i]?.label ?? '', sanitizeFormulas)).join('\t');
   const bodyLines = rows.map(row =>
-    colIds.map(i => escapeTsvCell(row.cells[i]?.text ?? '')).join('\t'),
+    colIds.map(i => escapeTsvCell(row.cells[i]?.text ?? '', sanitizeFormulas)).join('\t'),
   );
   return [headerLine, ...bodyLines].join('\n');
 }
@@ -42,11 +57,12 @@ export function serializeToCsv(
   rows: readonly TableRowData[],
   visibleColIndexes?: readonly number[],
   withBom = true,
+  sanitizeFormulas = true,
 ): string {
   const colIds = visibleColIndexes ?? columns.map(c => c.index);
-  const headerLine = colIds.map(i => escapeCsvCell(columns[i]?.label ?? '')).join(',');
+  const headerLine = colIds.map(i => escapeCsvCell(columns[i]?.label ?? '', sanitizeFormulas)).join(',');
   const bodyLines = rows.map(row =>
-    colIds.map(i => escapeCsvCell(row.cells[i]?.text ?? '')).join(','),
+    colIds.map(i => escapeCsvCell(row.cells[i]?.text ?? '', sanitizeFormulas)).join(','),
   );
   const content = [headerLine, ...bodyLines].join('\r\n');
   return withBom ? `\uFEFF${content}` : content;

@@ -92,24 +92,47 @@ export function enhanceInlineTable(
   host.insertBefore(bar, host.firstChild);
 
   let frozen = false;
+  let barObserver: ResizeObserver | null = null;
+  let cachedRowTexts: string[] | null = null;
+
+  const syncBarHeight = (): void => {
+    if (!frozen) return;
+    const barH = Math.max(32, Math.ceil(bar.getBoundingClientRect().height || 36));
+    host.style.setProperty('--qs-wb-bar-h', `${barH}px`);
+  };
+
+  const disconnectBarObserver = (): void => {
+    barObserver?.disconnect();
+    barObserver = null;
+  };
+
   const setFrozen = (next: boolean): void => {
     frozen = next;
     host.classList.toggle('qs-wb-table-frozen', frozen);
     btnFreeze.classList.toggle('is-active', frozen);
     if (frozen) {
-      const barH = Math.max(32, Math.ceil(bar.getBoundingClientRect().height || 36));
-      host.style.setProperty('--qs-wb-bar-h', `${barH}px`);
+      syncBarHeight();
+      disconnectBarObserver();
+      const RO = doc.defaultView?.ResizeObserver ?? (typeof ResizeObserver === 'function' ? ResizeObserver : null);
+      if (RO) {
+        barObserver = new RO(() => syncBarHeight());
+        barObserver.observe(bar);
+      }
     } else {
+      disconnectBarObserver();
       host.style.removeProperty('--qs-wb-bar-h');
     }
   };
 
   const applyFilter = (): void => {
     const q = filterInput.value.trim().toLowerCase();
+    if (cachedRowTexts === null) {
+      cachedRowTexts = bodyRows.map(tr => (tr.textContent || '').toLowerCase());
+    }
     let visible = 0;
-    for (const tr of bodyRows) {
-      const match = !q || (tr.textContent || '').toLowerCase().includes(q);
-      tr.classList.toggle('qs-wb-row-hidden', !match);
+    for (let i = 0; i < bodyRows.length; i++) {
+      const match = !q || cachedRowTexts[i].includes(q);
+      bodyRows[i].classList.toggle('qs-wb-row-hidden', !match);
       if (match) visible++;
     }
     meta.textContent = q ? `${visible}/${rowCount}×${colCount}` : `${rowCount}×${colCount}`;
@@ -144,6 +167,8 @@ export function enhanceInlineTable(
   });
 
   child.register(() => {
+    disconnectBarObserver();
+    cachedRowTexts = null;
     for (const tr of bodyRows) tr.classList.remove('qs-wb-row-hidden');
     host.classList.remove('qs-wb-table-host', 'qs-wb-table-frozen');
     host.style.removeProperty('--qs-wb-inline-max-h');
